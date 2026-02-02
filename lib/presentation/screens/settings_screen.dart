@@ -1,11 +1,17 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/services/auth_service.dart';
+import '../../core/services/services.dart';
+import '../../core/services/settings_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../providers/app_state_provider.dart';
 
 /// Settings screen for app configuration
+/// 
+/// All settings are persisted immediately to SQLite and broadcast
+/// to all screens via SettingsService streams
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -14,47 +20,143 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final SettingsService _settingsService = SettingsService.instance;
   final AuthService _authService = AuthService.instance;
   
-  // Attendance Settings
-  int _gracePeriod = AppConstants.defaultGracePeriodMinutes;
-  int _attendanceWindow = AppConstants.attendanceWindowMinutes;
-  int _qrRefreshSeconds = AppConstants.qrRefreshSeconds;
-  bool _requireDeviceBinding = true;
-  bool _allowManualEntry = true;
-  bool _allowBarcodeEntry = true;
-  bool _allowQrEntry = true;
-  bool _allowFingerprintEntry = false;
+  // Settings state
+  SettingsState _settings = const SettingsState();
+  StreamSubscription<SettingsState>? _subscription;
   
-  // Payroll Settings
-  double _overtimeMultiplier = AppConstants.defaultOvertimeMultiplier;
-  double _weekendMultiplier = AppConstants.weekendOvertimeMultiplier;
-  bool _calculateOvertime = true;
+  bool _isLoading = true;
+  bool _isSaving = false;
   
-  // System Settings
-  bool _autoBackup = true;
-  int _backupInterval = 24; // hours
-  bool _syncEnabled = false;
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+  
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+  
+  Future<void> _loadSettings() async {
+    await _settingsService.initialize();
+    
+    // Subscribe to settings changes
+    _subscription = _settingsService.settingsStream.listen((state) {
+      if (mounted) {
+        setState(() => _settings = state);
+      }
+    });
+    
+    setState(() {
+      _settings = _settingsService.currentState;
+      _isLoading = false;
+    });
+  }
+  
+  /// Save a single setting
+  Future<void> _saveSetting(String key, dynamic value) async {
+    setState(() => _isSaving = true);
+    try {
+      await _settingsService.setValue(key, value);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Setting saved'),
+            duration: Duration(seconds: 1),
+            backgroundColor: AppTheme.successColor,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+  
+  Future<void> _resetToDefaults() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset Settings'),
+        content: const Text('Are you sure you want to reset all settings to defaults? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      await _settingsService.resetToDefaults();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Settings reset to defaults'),
+            backgroundColor: AppTheme.successColor,
+          ),
+        );
+      }
+    }
+  }
   
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppStateProvider>(context);
+    
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
     
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Settings',
-            style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-            ),
+          // Header
+          Row(
+            children: [
+              const Text(
+                'Settings',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              if (_isSaving) ...[
+                const SizedBox(width: 16),
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ],
           ),
           const SizedBox(height: 8),
           Text(
-            'Configure system preferences',
+            'Configure system preferences. Changes are saved automatically.',
             style: TextStyle(color: AppTheme.textSecondary),
           ),
           const SizedBox(height: 24),
@@ -123,61 +225,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     
                     // Attendance Settings
                     _buildSection(
-                      title: 'Attendance Settings',
+                      title: 'Attendance Rules',
                       icon: Icons.access_time,
                       children: [
-                        ListTile(
-                          title: const Text('Grace Period'),
-                          subtitle: const Text('Minutes allowed after shift start'),
-                          trailing: SizedBox(
-                            width: 100,
-                            child: TextField(
-                              decoration: const InputDecoration(
-                                suffixText: 'min',
-                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                              keyboardType: TextInputType.number,
-                              controller: TextEditingController(text: _gracePeriod.toString()),
-                              onChanged: (value) {
-                                _gracePeriod = int.tryParse(value) ?? _gracePeriod;
-                              },
-                            ),
+                        _buildNumberSetting(
+                          title: 'Grace Period',
+                          subtitle: 'Minutes allowed after shift start',
+                          value: _settings.gracePeriodMinutes,
+                          suffix: 'min',
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.gracePeriodMinutes,
+                            value,
                           ),
                         ),
-                        ListTile(
-                          title: const Text('Attendance Window'),
-                          subtitle: const Text('Minutes before/after shift to clock in'),
-                          trailing: SizedBox(
-                            width: 100,
-                            child: TextField(
-                              decoration: const InputDecoration(
-                                suffixText: 'min',
-                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                              keyboardType: TextInputType.number,
-                              controller: TextEditingController(text: _attendanceWindow.toString()),
-                              onChanged: (value) {
-                                _attendanceWindow = int.tryParse(value) ?? _attendanceWindow;
-                              },
-                            ),
+                        _buildNumberSetting(
+                          title: 'Attendance Window',
+                          subtitle: 'Minutes before/after shift to clock in',
+                          value: _settings.attendanceWindowMinutes,
+                          suffix: 'min',
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.attendanceWindowMinutes,
+                            value,
                           ),
                         ),
-                        ListTile(
-                          title: const Text('QR Code Refresh'),
-                          subtitle: const Text('Seconds before QR code refreshes'),
-                          trailing: SizedBox(
-                            width: 100,
-                            child: TextField(
-                              decoration: const InputDecoration(
-                                suffixText: 'sec',
-                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                              keyboardType: TextInputType.number,
-                              controller: TextEditingController(text: _qrRefreshSeconds.toString()),
-                              onChanged: (value) {
-                                _qrRefreshSeconds = int.tryParse(value) ?? _qrRefreshSeconds;
-                              },
-                            ),
+                        _buildNumberSetting(
+                          title: 'QR Code Refresh',
+                          subtitle: 'Seconds before QR code refreshes (anti-fraud)',
+                          value: _settings.qrRefreshSeconds,
+                          suffix: 'sec',
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.qrRefreshSeconds,
+                            value,
+                          ),
+                        ),
+                        _buildNumberSetting(
+                          title: 'Duplicate Scan Protection',
+                          subtitle: 'Minimum seconds between scans',
+                          value: _settings.duplicateScanProtectionSeconds,
+                          suffix: 'sec',
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.duplicateScanProtectionSeconds,
+                            value,
                           ),
                         ),
                       ],
@@ -192,10 +280,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         SwitchListTile(
                           title: const Text('Device Binding'),
                           subtitle: const Text('Only allow registered devices'),
-                          value: _requireDeviceBinding,
-                          onChanged: (value) {
-                            setState(() => _requireDeviceBinding = value);
-                          },
+                          value: _settings.requireDeviceBinding,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.requireDeviceBinding,
+                            value,
+                          ),
+                        ),
+                        SwitchListTile(
+                          title: const Text('Location Verification'),
+                          subtitle: const Text('Verify attendance location (requires GPS)'),
+                          value: _settings.enableLocationVerification,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.enableLocationVerification,
+                            value,
+                          ),
                         ),
                       ],
                     ),
@@ -212,39 +310,66 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _buildSection(
                       title: 'Attendance Methods',
                       icon: Icons.fingerprint,
+                      description: 'Enable/disable attendance input methods',
                       children: [
                         SwitchListTile(
                           title: const Text('Manual Entry'),
                           subtitle: const Text('Allow employee code entry'),
-                          value: _allowManualEntry,
-                          onChanged: (value) {
-                            setState(() => _allowManualEntry = value);
-                          },
+                          value: _settings.allowManualEntry,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.allowManualEntry,
+                            value,
+                          ),
                         ),
                         SwitchListTile(
                           title: const Text('Barcode Scanner'),
-                          subtitle: const Text('USB barcode scanner'),
-                          value: _allowBarcodeEntry,
-                          onChanged: (value) {
-                            setState(() => _allowBarcodeEntry = value);
-                          },
+                          subtitle: const Text('USB barcode scanner input'),
+                          value: _settings.allowBarcodeEntry,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.allowBarcodeEntry,
+                            value,
+                          ),
                         ),
                         SwitchListTile(
                           title: const Text('QR Code'),
-                          subtitle: const Text('Laptop camera QR scanning'),
-                          value: _allowQrEntry,
-                          onChanged: (value) {
-                            setState(() => _allowQrEntry = value);
-                          },
+                          subtitle: const Text('Dynamic QR code with auto-refresh'),
+                          value: _settings.allowQrEntry,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.allowQrEntry,
+                            value,
+                          ),
                         ),
                         SwitchListTile(
                           title: const Text('Fingerprint'),
                           subtitle: const Text('Fingerprint device (ZKTeco, DigitalPersona)'),
-                          value: _allowFingerprintEntry,
-                          onChanged: (value) {
-                            setState(() => _allowFingerprintEntry = value);
-                          },
+                          value: _settings.allowFingerprintEntry,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.allowFingerprintEntry,
+                            value,
+                          ),
                         ),
+                        if (!_settings.hasAnyAttendanceMethod)
+                          Container(
+                            margin: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppTheme.warningColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppTheme.warningColor),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.warning, color: AppTheme.warningColor),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Warning: No attendance method is enabled! Employees will not be able to clock in/out.',
+                                    style: TextStyle(color: AppTheme.warningColor),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -257,45 +382,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         SwitchListTile(
                           title: const Text('Calculate Overtime'),
                           subtitle: const Text('Automatically calculate overtime pay'),
-                          value: _calculateOvertime,
-                          onChanged: (value) {
-                            setState(() => _calculateOvertime = value);
-                          },
-                        ),
-                        ListTile(
-                          title: const Text('Overtime Multiplier'),
-                          subtitle: const Text('Regular overtime rate'),
-                          trailing: SizedBox(
-                            width: 100,
-                            child: TextField(
-                              decoration: const InputDecoration(
-                                suffixText: 'x',
-                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                              keyboardType: TextInputType.number,
-                              controller: TextEditingController(text: _overtimeMultiplier.toString()),
-                              onChanged: (value) {
-                                _overtimeMultiplier = double.tryParse(value) ?? _overtimeMultiplier;
-                              },
-                            ),
+                          value: _settings.calculateOvertime,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.calculateOvertime,
+                            value,
                           ),
                         ),
-                        ListTile(
-                          title: const Text('Weekend Multiplier'),
-                          subtitle: const Text('Weekend overtime rate'),
-                          trailing: SizedBox(
-                            width: 100,
-                            child: TextField(
-                              decoration: const InputDecoration(
-                                suffixText: 'x',
-                                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              ),
-                              keyboardType: TextInputType.number,
-                              controller: TextEditingController(text: _weekendMultiplier.toString()),
-                              onChanged: (value) {
-                                _weekendMultiplier = double.tryParse(value) ?? _weekendMultiplier;
-                              },
-                            ),
+                        _buildNumberSetting(
+                          title: 'Overtime Multiplier',
+                          subtitle: 'Regular overtime rate',
+                          value: _settings.overtimeMultiplier,
+                          suffix: 'x',
+                          isDouble: true,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.overtimeMultiplier,
+                            value,
+                          ),
+                        ),
+                        _buildNumberSetting(
+                          title: 'Weekend Multiplier',
+                          subtitle: 'Weekend overtime rate',
+                          value: _settings.weekendMultiplier,
+                          suffix: 'x',
+                          isDouble: true,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.weekendMultiplier,
+                            value,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Kiosk Settings
+                    _buildSection(
+                      title: 'Kiosk Mode',
+                      icon: Icons.tv,
+                      children: [
+                        SwitchListTile(
+                          title: const Text('Sound Feedback'),
+                          subtitle: const Text('Play sounds on attendance success/failure'),
+                          value: _settings.soundEnabled,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.soundEnabled,
+                            value,
+                          ),
+                        ),
+                        SwitchListTile(
+                          title: const Text('Show Recent Activity'),
+                          subtitle: const Text('Display last 3 attendance records'),
+                          value: _settings.showLastAttendance,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.showLastAttendance,
+                            value,
+                          ),
+                        ),
+                        _buildNumberSetting(
+                          title: 'Kiosk Timeout',
+                          subtitle: 'Seconds before clearing input',
+                          value: _settings.kioskModeTimeout,
+                          suffix: 'sec',
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.kioskModeTimeout,
+                            value,
                           ),
                         ),
                       ],
@@ -310,43 +459,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         SwitchListTile(
                           title: const Text('Auto Backup'),
                           subtitle: const Text('Automatic local backup'),
-                          value: _autoBackup,
-                          onChanged: (value) {
-                            setState(() => _autoBackup = value);
-                          },
+                          value: _settings.autoBackup,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.autoBackup,
+                            value,
+                          ),
                         ),
-                        if (_autoBackup)
+                        if (_settings.autoBackup)
                           ListTile(
                             title: const Text('Backup Interval'),
                             subtitle: const Text('Hours between backups'),
-                            trailing: SizedBox(
-                              width: 100,
-                              child: DropdownButtonFormField<int>(
-                                value: _backupInterval,
-                                decoration: const InputDecoration(
-                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                ),
-                                items: const [
-                                  DropdownMenuItem(value: 6, child: Text('6h')),
-                                  DropdownMenuItem(value: 12, child: Text('12h')),
-                                  DropdownMenuItem(value: 24, child: Text('24h')),
-                                  DropdownMenuItem(value: 48, child: Text('48h')),
-                                ],
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    setState(() => _backupInterval = value);
-                                  }
-                                },
-                              ),
+                            trailing: DropdownButton<int>(
+                              value: _settings.backupIntervalHours,
+                              items: const [
+                                DropdownMenuItem(value: 6, child: Text('6 hours')),
+                                DropdownMenuItem(value: 12, child: Text('12 hours')),
+                                DropdownMenuItem(value: 24, child: Text('24 hours')),
+                                DropdownMenuItem(value: 48, child: Text('48 hours')),
+                              ],
+                              onChanged: (value) {
+                                if (value != null) {
+                                  _saveSetting(SettingKeys.backupIntervalHours, value);
+                                }
+                              },
                             ),
                           ),
                         SwitchListTile(
                           title: const Text('Cloud Sync'),
                           subtitle: const Text('Sync data to cloud (optional)'),
-                          value: _syncEnabled,
-                          onChanged: (value) {
-                            setState(() => _syncEnabled = value);
-                          },
+                          value: _settings.cloudSyncEnabled,
+                          onChanged: (value) => _saveSetting(
+                            SettingKeys.cloudSyncEnabled,
+                            value,
+                          ),
                         ),
                         const Divider(),
                         ListTile(
@@ -355,29 +500,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           trailing: ElevatedButton.icon(
                             icon: const Icon(Icons.download),
                             label: const Text('Export'),
-                            onPressed: () {
-                              // TODO: Export database
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Database export feature coming soon'),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                        ListTile(
-                          title: const Text('Import Database'),
-                          subtitle: const Text('Restore from backup'),
-                          trailing: ElevatedButton.icon(
-                            icon: const Icon(Icons.upload),
-                            label: const Text('Import'),
-                            onPressed: () {
-                              // TODO: Import database
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Database import feature coming soon'),
-                                ),
-                              );
+                            onPressed: () async {
+                              try {
+                                final path = await DatabaseService.instance.exportDatabase();
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Database exported to: $path'),
+                                      backgroundColor: AppTheme.successColor,
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Export failed: $e'),
+                                      backgroundColor: AppTheme.errorColor,
+                                    ),
+                                  );
+                                }
+                              }
                             },
                           ),
                         ),
@@ -452,7 +595,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: const Text(
-                                'Lifetime License',
+                                'Offline-First',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: AppTheme.primaryColor,
@@ -468,81 +611,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Column(
                     children: [
                       OutlinedButton.icon(
-                        icon: const Icon(Icons.help_outline),
-                        label: const Text('Help'),
-                        onPressed: () {
-                          // TODO: Show help
-                        },
+                        icon: const Icon(Icons.restore),
+                        label: const Text('Reset'),
+                        onPressed: _resetToDefaults,
                       ),
                       const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.info_outline),
-                        label: const Text('About'),
-                        onPressed: () {
-                          showAboutDialog(
-                            context: context,
-                            applicationName: 'Pharmacy Attendance',
-                            applicationVersion: AppConstants.appVersion,
-                            applicationIcon: Container(
-                              width: 48,
-                              height: 48,
-                              decoration: BoxDecoration(
-                                color: AppTheme.primaryColor,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.medical_services,
-                                color: Colors.white,
-                              ),
-                            ),
-                            children: const [
-                              Text(
-                                'Enterprise HR & Attendance Management System for Pharmacies',
-                              ),
-                            ],
-                          );
-                        },
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.tv),
+                        label: const Text('Kiosk Mode'),
+                        onPressed: () => context.go('/kiosk'),
                       ),
                     ],
                   ),
                 ],
               ),
             ),
-          ),
-          const SizedBox(height: 24),
-          
-          // Save Button
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              OutlinedButton(
-                onPressed: () {
-                  // Reset to defaults
-                  setState(() {
-                    _gracePeriod = AppConstants.defaultGracePeriodMinutes;
-                    _attendanceWindow = AppConstants.attendanceWindowMinutes;
-                    _qrRefreshSeconds = AppConstants.qrRefreshSeconds;
-                    _overtimeMultiplier = AppConstants.defaultOvertimeMultiplier;
-                    _weekendMultiplier = AppConstants.weekendOvertimeMultiplier;
-                  });
-                },
-                child: const Text('Reset to Defaults'),
-              ),
-              const SizedBox(width: 16),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.save),
-                label: const Text('Save Settings'),
-                onPressed: () {
-                  // TODO: Save settings to database
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Settings saved successfully'),
-                      backgroundColor: AppTheme.successColor,
-                    ),
-                  );
-                },
-              ),
-            ],
           ),
         ],
       ),
@@ -553,6 +636,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required String title,
     required IconData icon,
     required List<Widget> children,
+    String? description,
   }) {
     return Card(
       child: Column(
@@ -560,23 +644,74 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(icon, color: AppTheme.primaryColor),
-                const SizedBox(width: 8),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                Row(
+                  children: [
+                    Icon(icon, color: AppTheme.primaryColor),
+                    const SizedBox(width: 8),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
+                if (description != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
           const Divider(height: 1),
           ...children,
         ],
+      ),
+    );
+  }
+  
+  Widget _buildNumberSetting({
+    required String title,
+    required String subtitle,
+    required num value,
+    required String suffix,
+    bool isDouble = false,
+    required Function(num) onChanged,
+  }) {
+    return ListTile(
+      title: Text(title),
+      subtitle: Text(subtitle),
+      trailing: SizedBox(
+        width: 100,
+        child: TextField(
+          decoration: InputDecoration(
+            suffixText: suffix,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            isDense: true,
+          ),
+          keyboardType: TextInputType.number,
+          controller: TextEditingController(
+            text: isDouble ? value.toStringAsFixed(1) : value.toString(),
+          ),
+          onSubmitted: (text) {
+            final newValue = isDouble 
+                ? double.tryParse(text)
+                : int.tryParse(text);
+            if (newValue != null) {
+              onChanged(newValue);
+            }
+          },
+        ),
       ),
     );
   }

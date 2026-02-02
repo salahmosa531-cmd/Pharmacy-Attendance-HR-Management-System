@@ -7,7 +7,7 @@ class AppConstants {
   
   // Database
   static const String databaseName = 'pharmacy_attendance.db';
-  static const int databaseVersion = 1;
+  static const int databaseVersion = 2; // v2: Added description to audit_logs
   
   // Subscription/Trial
   static const int trialPeriodDays = 30;
