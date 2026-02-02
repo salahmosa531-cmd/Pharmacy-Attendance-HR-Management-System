@@ -227,6 +227,7 @@ class DatabaseService {
         entity_id TEXT,
         old_values TEXT,
         new_values TEXT,
+        description TEXT,
         ip_address TEXT,
         device_id TEXT,
         timestamp TEXT NOT NULL,
@@ -457,9 +458,13 @@ class DatabaseService {
   
   /// Handle database upgrades
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Handle future migrations here
-    // Example:
-    // if (oldVersion < 2) {
+    // Migration v1 -> v2: Add description column to audit_logs
+    if (oldVersion < 2) {
+      await db.execute('ALTER TABLE audit_logs ADD COLUMN description TEXT');
+    }
+    
+    // Future migrations go here:
+    // if (oldVersion < 3) {
     //   await db.execute('ALTER TABLE employees ADD COLUMN new_field TEXT');
     // }
   }

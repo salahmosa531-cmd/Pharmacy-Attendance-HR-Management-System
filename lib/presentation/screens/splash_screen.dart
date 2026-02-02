@@ -64,10 +64,10 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     
     if (needsSetup) {
       context.go('/setup');
-    } else if (authService.isLoggedIn) {
-      context.go('/dashboard');
     } else {
-      context.go('/login');
+      // Default to Kiosk mode - the public attendance screen
+      // Admin can access dashboard via hidden shortcut (Ctrl+Shift+A) or login
+      context.go('/kiosk');
     }
   }
   

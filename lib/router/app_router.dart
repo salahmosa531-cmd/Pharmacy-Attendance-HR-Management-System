@@ -5,6 +5,7 @@ import '../core/services/auth_service.dart';
 import '../presentation/screens/splash_screen.dart';
 import '../presentation/screens/setup_screen.dart';
 import '../presentation/screens/login_screen.dart';
+import '../presentation/screens/kiosk_screen.dart';
 import '../presentation/screens/main_shell.dart';
 import '../presentation/screens/dashboard_screen.dart';
 import '../presentation/screens/attendance_screen.dart';
@@ -19,6 +20,13 @@ import '../presentation/screens/audit_log_screen.dart';
 import '../presentation/screens/branches_screen.dart';
 
 /// Application router configuration
+/// 
+/// Navigation Flow:
+/// 1. Splash Screen - Initial loading
+/// 2. Setup Screen - First-time setup (if no users exist)
+/// 3. Kiosk Screen - DEFAULT screen for employee attendance (PUBLIC)
+/// 4. Login Screen - Admin access (accessed via hidden shortcut in Kiosk)
+/// 5. Admin Dashboard - Full admin features (requires login)
 class AppRouter {
   static final _rootNavigatorKey = GlobalKey<NavigatorState>();
   static final _shellNavigatorKey = GlobalKey<NavigatorState>();
@@ -26,28 +34,45 @@ class AppRouter {
   static final GoRouter router = GoRouter(
     navigatorKey: _rootNavigatorKey,
     initialLocation: '/',
-    debugLogDiagnostics: true,
+    debugLogDiagnostics: false, // Disable in production
     redirect: (context, state) async {
       final authService = AuthService.instance;
       final isLoggedIn = authService.isLoggedIn;
       final needsSetup = await authService.needsInitialSetup();
       
-      final isSplash = state.matchedLocation == '/';
-      final isSetup = state.matchedLocation == '/setup';
-      final isLogin = state.matchedLocation == '/login';
+      final currentPath = state.matchedLocation;
+      final isSplash = currentPath == '/';
+      final isSetup = currentPath == '/setup';
+      final isLogin = currentPath == '/login';
+      final isKiosk = currentPath == '/kiosk';
+      final isAdminRoute = currentPath.startsWith('/admin') || 
+                          currentPath.startsWith('/dashboard') ||
+                          currentPath.startsWith('/employees') ||
+                          currentPath.startsWith('/shifts') ||
+                          currentPath.startsWith('/reports') ||
+                          currentPath.startsWith('/payroll') ||
+                          currentPath.startsWith('/settings') ||
+                          currentPath.startsWith('/audit-log') ||
+                          currentPath.startsWith('/branches') ||
+                          currentPath.startsWith('/attendance');
       
       // First check if system needs setup
       if (needsSetup && !isSetup && !isSplash) {
         return '/setup';
       }
       
-      // If needs setup and trying to access other routes
+      // If needs setup and on splash, allow navigation to setup
       if (needsSetup) {
-        return null; // Allow splash or setup
+        return null;
       }
       
-      // If not logged in, redirect to login
-      if (!isLoggedIn && !isLogin && !isSplash) {
+      // After setup/splash, redirect to kiosk (default public screen)
+      if (isSplash) {
+        return null; // Let splash handle navigation
+      }
+      
+      // Admin routes require login
+      if (isAdminRoute && !isLoggedIn) {
         return '/login';
       }
       
@@ -59,25 +84,31 @@ class AppRouter {
       return null;
     },
     routes: [
-      // Splash screen
+      // Splash screen - Initial loading
       GoRoute(
         path: '/',
         builder: (context, state) => const SplashScreen(),
       ),
       
-      // Initial setup
+      // Initial setup - First-time configuration
       GoRoute(
         path: '/setup',
         builder: (context, state) => const SetupScreen(),
       ),
       
-      // Login
+      // Kiosk Mode - PUBLIC employee attendance screen (DEFAULT)
+      GoRoute(
+        path: '/kiosk',
+        builder: (context, state) => const KioskScreen(),
+      ),
+      
+      // Login - Admin access
       GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
       ),
       
-      // Main shell with navigation
+      // Admin shell with navigation (REQUIRES LOGIN)
       ShellRoute(
         navigatorKey: _shellNavigatorKey,
         builder: (context, state, child) => MainShell(child: child),
@@ -90,7 +121,7 @@ class AppRouter {
             ),
           ),
           
-          // Attendance
+          // Attendance Management (Admin view)
           GoRoute(
             path: '/attendance',
             pageBuilder: (context, state) => const NoTransitionPage(
@@ -198,8 +229,8 @@ class AppRouter {
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: () => context.go('/dashboard'),
-              child: const Text('Go to Dashboard'),
+              onPressed: () => context.go('/kiosk'),
+              child: const Text('Go to Attendance'),
             ),
           ],
         ),

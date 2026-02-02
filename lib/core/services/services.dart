@@ -7,3 +7,4 @@ export 'qr_service.dart';
 export 'sync_service.dart';
 export 'diagnostic_service.dart';
 export 'license_service.dart';
+export 'settings_service.dart';
