@@ -5,9 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/services.dart';
-import '../../core/services/settings_service.dart';
 import '../../core/constants/app_constants.dart';
-import '../../data/models/attendance_model.dart';
 import '../../data/repositories/repositories.dart';
 
 /// Kiosk Mode - Default screen for employee attendance
@@ -18,7 +16,12 @@ import '../../data/repositories/repositories.dart';
 /// - Multiple input methods based on settings
 /// - Clear feedback on success/failure
 /// - No access to admin features
-/// - Hidden admin access via keyboard shortcut (Ctrl+Shift+A)
+/// - Hidden admin access via keyboard shortcut (Ctrl+Shift+A) or hidden button
+/// 
+/// Admin Access Methods:
+/// 1. Keyboard shortcut: Ctrl+Shift+A
+/// 2. Hidden button: Long-press on version text in footer
+/// 3. Triple-tap on pharmacy logo
 class KioskScreen extends StatefulWidget {
   const KioskScreen({super.key});
 
@@ -40,8 +43,6 @@ class _KioskScreenState extends State<KioskScreen> {
   bool _isProcessing = false;
   String? _message;
   bool _isError = false;
-  String? _lastEmployeeName;
-  DateTime? _lastActionTime;
   
   // QR Code
   String? _qrCode;
@@ -61,6 +62,11 @@ class _KioskScreenState extends State<KioskScreen> {
   
   // Admin access
   final _adminPasswordController = TextEditingController();
+  int _logoTapCount = 0;
+  Timer? _logoTapTimer;
+  
+  // Focus node for keyboard shortcuts - MUST be kept active
+  final FocusNode _keyboardFocusNode = FocusNode();
   
   @override
   void initState() {
@@ -102,10 +108,43 @@ class _KioskScreenState extends State<KioskScreen> {
     _codeController.dispose();
     _codeFocusNode.dispose();
     _adminPasswordController.dispose();
+    _keyboardFocusNode.dispose();
     _qrTimer?.cancel();
     _clockTimer?.cancel();
+    _logoTapTimer?.cancel();
     _settingsSubscription?.cancel();
     super.dispose();
+  }
+  
+  /// Handle triple-tap on logo for admin access
+  void _onLogoTap() {
+    _logoTapCount++;
+    _logoTapTimer?.cancel();
+    _logoTapTimer = Timer(const Duration(milliseconds: 500), () {
+      _logoTapCount = 0;
+    });
+    
+    if (_logoTapCount >= 3) {
+      _logoTapCount = 0;
+      _logoTapTimer?.cancel();
+      _showAdminAccessDialog();
+    }
+  }
+  
+  /// Handle keyboard shortcut for admin access
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent) {
+      // Check for Ctrl+Shift+A
+      final isCtrlPressed = HardwareKeyboard.instance.isControlPressed;
+      final isShiftPressed = HardwareKeyboard.instance.isShiftPressed;
+      final isKeyA = event.logicalKey == LogicalKeyboardKey.keyA;
+      
+      if (isCtrlPressed && isShiftPressed && isKeyA) {
+        _showAdminAccessDialog();
+        return KeyEventResult.handled;
+      }
+    }
+    return KeyEventResult.ignored;
   }
   
   Future<void> _generateQrCode() async {
@@ -188,8 +227,6 @@ class _KioskScreenState extends State<KioskScreen> {
         
         setState(() {
           _message = 'Welcome, ${employee?.fullName ?? "Employee"}! Clock in successful.';
-          _lastEmployeeName = employee?.fullName;
-          _lastActionTime = DateTime.now();
           _isError = false;
         });
         
@@ -207,14 +244,12 @@ class _KioskScreenState extends State<KioskScreen> {
         final employee = await _employeeRepository.getById(record.employeeId);
         
         // Calculate worked hours
-        final workedMinutes = record.workedMinutes ?? 0;
+        final workedMinutes = record.workedMinutes;
         final hours = workedMinutes ~/ 60;
         final minutes = workedMinutes % 60;
         
         setState(() {
           _message = 'Goodbye, ${employee?.fullName ?? "Employee"}! Worked: ${hours}h ${minutes}m';
-          _lastEmployeeName = employee?.fullName;
-          _lastActionTime = DateTime.now();
           _isError = false;
         });
         
@@ -307,29 +342,44 @@ class _KioskScreenState extends State<KioskScreen> {
   }
   
   Future<void> _validateAdminAccess() async {
-    final password = _adminPasswordController.text;
+    // Get the entered password for potential validation
+    final enteredPassword = _adminPasswordController.text;
     _adminPasswordController.clear();
     
-    // Check if password matches stored admin password
-    // For now, redirect to login screen
-    Navigator.pop(context);
-    context.go('/login');
+    // Close the dialog
+    if (mounted) Navigator.pop(context);
+    
+    // Check if password matches stored admin password from settings
+    final storedPassword = _settings.kioskAdminPassword;
+    
+    if (storedPassword.isNotEmpty && enteredPassword != storedPassword) {
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid admin password'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+      return;
+    }
+    
+    // Navigate to login screen for admin authentication
+    if (mounted) context.go('/login');
   }
   
   @override
   Widget build(BuildContext context) {
-    return KeyboardListener(
-      focusNode: FocusNode(),
-      onKeyEvent: (event) {
-        // Hidden admin access: Ctrl+Shift+A
-        if (event is KeyDownEvent &&
-            HardwareKeyboard.instance.isControlPressed &&
-            HardwareKeyboard.instance.isShiftPressed &&
-            event.logicalKey == LogicalKeyboardKey.keyA) {
-          _showAdminAccessDialog();
-        }
-      },
-      child: Scaffold(
+    // FIXED: Use Focus widget with proper onKeyEvent handler for reliable keyboard shortcuts
+    return Focus(
+      focusNode: _keyboardFocusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: GestureDetector(
+        // Ensure focus is maintained when tapping anywhere
+        onTap: () => _keyboardFocusNode.requestFocus(),
+        child: Scaffold(
         backgroundColor: AppTheme.backgroundColor,
         body: SafeArea(
           child: Column(
@@ -362,6 +412,7 @@ class _KioskScreenState extends State<KioskScreen> {
             ],
           ),
         ),
+        ),
       ),
     );
   }
@@ -381,19 +432,22 @@ class _KioskScreenState extends State<KioskScreen> {
       ),
       child: Row(
         children: [
-          // Logo and name
+          // Logo and name - Triple-tap logo for admin access
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.medical_services,
-                  color: Colors.white,
-                  size: 24,
+              GestureDetector(
+                onTap: _onLogoTap,
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.medical_services,
+                    color: Colors.white,
+                    size: 24,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -816,12 +870,18 @@ class _KioskScreenState extends State<KioskScreen> {
           ),
           const Spacer(),
           
-          // Version info
-          Text(
-            'v${AppConstants.appVersion}',
-            style: TextStyle(
-              color: AppTheme.textDisabled,
-              fontSize: 12,
+          // Version info - Long-press for admin access
+          GestureDetector(
+            onLongPress: _showAdminAccessDialog,
+            child: Tooltip(
+              message: 'Long-press for admin access',
+              child: Text(
+                'v${AppConstants.appVersion}',
+                style: TextStyle(
+                  color: AppTheme.textDisabled,
+                  fontSize: 12,
+                ),
+              ),
             ),
           ),
         ],

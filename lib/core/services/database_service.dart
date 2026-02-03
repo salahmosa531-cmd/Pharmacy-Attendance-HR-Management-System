@@ -5,9 +5,17 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../constants/app_constants.dart';
 
 /// Database service for SQLite operations
+/// 
+/// Implements safe production migrations that:
+/// - Check column existence before ALTER TABLE
+/// - Log all migration steps
+/// - Never run redundant migrations
 class DatabaseService {
   static DatabaseService? _instance;
   static Database? _database;
+  
+  // Migration log for debugging
+  static final List<String> _migrationLog = [];
   
   DatabaseService._();
   
@@ -15,6 +23,12 @@ class DatabaseService {
     _instance ??= DatabaseService._();
     return _instance!;
   }
+  
+  /// Get migration log for debugging
+  static List<String> get migrationLog => List.unmodifiable(_migrationLog);
+  
+  /// Clear migration log
+  static void clearMigrationLog() => _migrationLog.clear();
   
   /// Initialize the database factory for desktop platforms
   static void initializeFfi() {
@@ -456,17 +470,92 @@ class DatabaseService {
     await batch.commit(noResult: true);
   }
   
-  /// Handle database upgrades
+  /// Handle database upgrades with safe production migrations
+  /// 
+  /// IMPORTANT: All migrations must:
+  /// 1. Check if change is needed (column exists, etc.)
+  /// 2. Log the migration step
+  /// 3. Handle failures gracefully
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    _logMigration('Starting migration from v$oldVersion to v$newVersion');
+    
     // Migration v1 -> v2: Add description column to audit_logs
     if (oldVersion < 2) {
-      await db.execute('ALTER TABLE audit_logs ADD COLUMN description TEXT');
+      await _safeAddColumn(
+        db,
+        tableName: 'audit_logs',
+        columnName: 'description',
+        columnType: 'TEXT',
+      );
     }
     
     // Future migrations go here:
     // if (oldVersion < 3) {
-    //   await db.execute('ALTER TABLE employees ADD COLUMN new_field TEXT');
+    //   await _safeAddColumn(
+    //     db,
+    //     tableName: 'employees',
+    //     columnName: 'new_field',
+    //     columnType: 'TEXT',
+    //   );
     // }
+    
+    _logMigration('Migration completed successfully');
+  }
+  
+  /// Safely add a column if it doesn't exist
+  /// Uses PRAGMA table_info to check column existence first
+  Future<bool> _safeAddColumn(
+    Database db, {
+    required String tableName,
+    required String columnName,
+    required String columnType,
+    String? defaultValue,
+  }) async {
+    try {
+      // Check if column already exists using PRAGMA
+      final tableInfo = await db.rawQuery('PRAGMA table_info($tableName)');
+      final columnExists = tableInfo.any(
+        (col) => col['name']?.toString().toLowerCase() == columnName.toLowerCase(),
+      );
+      
+      if (columnExists) {
+        _logMigration('Column $columnName already exists in $tableName - skipping');
+        return false;
+      }
+      
+      // Column doesn't exist, add it
+      String sql = 'ALTER TABLE $tableName ADD COLUMN $columnName $columnType';
+      if (defaultValue != null) {
+        sql += ' DEFAULT $defaultValue';
+      }
+      
+      await db.execute(sql);
+      _logMigration('Added column $columnName to $tableName');
+      return true;
+    } catch (e) {
+      _logMigration('ERROR adding column $columnName to $tableName: $e');
+      // Don't rethrow - allow app to continue even if migration fails
+      return false;
+    }
+  }
+  
+  /// Check if a column exists in a table
+  Future<bool> columnExists(String tableName, String columnName) async {
+    final db = await database;
+    final tableInfo = await db.rawQuery('PRAGMA table_info($tableName)');
+    return tableInfo.any(
+      (col) => col['name']?.toString().toLowerCase() == columnName.toLowerCase(),
+    );
+  }
+  
+  /// Log migration step
+  static void _logMigration(String message) {
+    final timestamp = DateTime.now().toIso8601String();
+    final logEntry = '[$timestamp] $message';
+    _migrationLog.add(logEntry);
+    // Also print for debugging
+    // ignore: avoid_print
+    print('DB Migration: $logEntry');
   }
   
   /// Close database

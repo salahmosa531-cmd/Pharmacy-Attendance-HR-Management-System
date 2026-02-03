@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/services/auth_service.dart';
+import '../core/services/logging_service.dart';
 import '../presentation/screens/splash_screen.dart';
 import '../presentation/screens/setup_screen.dart';
 import '../presentation/screens/login_screen.dart';
@@ -44,7 +45,7 @@ class AppRouter {
       final isSplash = currentPath == '/';
       final isSetup = currentPath == '/setup';
       final isLogin = currentPath == '/login';
-      final isKiosk = currentPath == '/kiosk';
+      // isKiosk is not used in redirect logic since kiosk is always accessible
       final isAdminRoute = currentPath.startsWith('/admin') || 
                           currentPath.startsWith('/dashboard') ||
                           currentPath.startsWith('/employees') ||
@@ -56,8 +57,12 @@ class AppRouter {
                           currentPath.startsWith('/branches') ||
                           currentPath.startsWith('/attendance');
       
+      // Log navigation attempt
+      final logger = LoggingService.instance;
+      
       // First check if system needs setup
       if (needsSetup && !isSetup && !isSplash) {
+        logger.navigation(currentPath, '/setup', 'needs initial setup');
         return '/setup';
       }
       
@@ -73,11 +78,13 @@ class AppRouter {
       
       // Admin routes require login
       if (isAdminRoute && !isLoggedIn) {
+        logger.navigation(currentPath, '/login', 'admin route requires login');
         return '/login';
       }
       
       // If logged in and trying to access login, redirect to dashboard
       if (isLoggedIn && isLogin) {
+        logger.navigation(currentPath, '/dashboard', 'already logged in');
         return '/dashboard';
       }
       
