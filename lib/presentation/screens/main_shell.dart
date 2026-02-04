@@ -69,21 +69,28 @@ class _MainShellState extends State<MainShell> {
     }
   }
   
+  // Navigation rail width constants
+  static const double _collapsedRailWidth = 72.0;
+  static const double _expandedRailWidth = 240.0;
+  
   @override
   Widget build(BuildContext context) {
     final authService = AuthService.instance;
     final selectedIndex = _getSelectedIndex(context);
+    final railWidth = _isRailExtended ? _expandedRailWidth : _collapsedRailWidth;
     
     return Scaffold(
       body: Row(
         children: [
-          // Navigation Rail
-          Container(
+          // Navigation Rail - FIXED: explicit width constraint to prevent RenderFlex errors
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: railWidth,
             decoration: BoxDecoration(
               color: Theme.of(context).cardColor,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.1),
+                  color: Colors.black.withValues(alpha: 0.1),
                   blurRadius: 4,
                   offset: const Offset(2, 0),
                 ),
@@ -112,7 +119,8 @@ class _MainShellState extends State<MainShell> {
                       ),
                       if (_isRailExtended) ...[
                         const SizedBox(width: 12),
-                        Expanded(
+                        // FIXED: Use Flexible instead of Expanded to prevent RenderFlex overflow
+                        Flexible(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -124,6 +132,7 @@ class _MainShellState extends State<MainShell> {
                                   fontSize: 16,
                                 ),
                                 overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
                               ),
                               Text(
                                 authService.currentBranch?.name ?? 'Attendance',
@@ -132,6 +141,7 @@ class _MainShellState extends State<MainShell> {
                                   color: AppTheme.textSecondary,
                                 ),
                                 overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
                               ),
                             ],
                           ),
@@ -270,7 +280,8 @@ class _MainShellState extends State<MainShell> {
                         ),
                         if (_isRailExtended) ...[
                           const SizedBox(width: 12),
-                          Expanded(
+                          // FIXED: Use Flexible instead of Expanded
+                          Flexible(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -281,6 +292,7 @@ class _MainShellState extends State<MainShell> {
                                     fontSize: 14,
                                   ),
                                   overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
                                 ),
                                 Text(
                                   authService.currentUser?.role.displayName ?? '',
@@ -288,6 +300,8 @@ class _MainShellState extends State<MainShell> {
                                     fontSize: 12,
                                     color: AppTheme.textSecondary,
                                   ),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
                                 ),
                               ],
                             ),
@@ -338,7 +352,7 @@ class _MainShellState extends State<MainShell> {
                     color: Theme.of(context).cardColor,
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
+                        color: Colors.black.withValues(alpha: 0.05),
                         blurRadius: 2,
                         offset: const Offset(0, 2),
                       ),
@@ -438,7 +452,7 @@ class _MainShellState extends State<MainShell> {
       ),
       child: Material(
         color: isSelected
-            ? AppTheme.primaryColor.withOpacity(0.1)
+            ? AppTheme.primaryColor.withValues(alpha: 0.1)
             : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
@@ -458,7 +472,8 @@ class _MainShellState extends State<MainShell> {
                 ),
                 if (_isRailExtended) ...[
                   const SizedBox(width: 12),
-                  Expanded(
+                  // FIXED: Use Flexible instead of Expanded
+                  Flexible(
                     child: Text(
                       label,
                       style: TextStyle(
@@ -467,6 +482,7 @@ class _MainShellState extends State<MainShell> {
                         fontSize: 14,
                       ),
                       overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
                     ),
                   ),
                 ],
