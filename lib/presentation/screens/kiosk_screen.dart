@@ -7,6 +7,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/services/services.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/repositories/repositories.dart';
+import '../../data/models/branch_model.dart';
 
 /// Kiosk Mode - Default screen for employee attendance
 /// 
@@ -32,6 +33,7 @@ class KioskScreen extends StatefulWidget {
 class _KioskScreenState extends State<KioskScreen> {
   final AttendanceService _attendanceService = AttendanceService.instance;
   final SettingsService _settingsService = SettingsService.instance;
+  final BranchContextService _branchService = BranchContextService.instance;
   final QrService _qrService = QrService.instance;
   final EmployeeRepository _employeeRepository = EmployeeRepository.instance;
   final AttendanceRepository _attendanceRepository = AttendanceRepository.instance;
@@ -57,6 +59,10 @@ class _KioskScreenState extends State<KioskScreen> {
   StreamSubscription<SettingsState>? _settingsSubscription;
   SettingsState _settings = const SettingsState();
   
+  // Branch context subscription
+  StreamSubscription<BranchContextState>? _branchSubscription;
+  Branch? _activeBranch;
+  
   // Recent attendance records
   List<Map<String, dynamic>> _recentRecords = [];
   
@@ -75,18 +81,41 @@ class _KioskScreenState extends State<KioskScreen> {
   }
   
   Future<void> _initializeKiosk() async {
+    // Subscribe to branch context changes FIRST
+    _activeBranch = _branchService.activeBranch;
+    _branchSubscription = _branchService.stateStream.listen((state) {
+      if (mounted) {
+        setState(() => _activeBranch = state.activeBranch);
+        
+        // If branch was cleared, redirect to branch selection
+        if (!state.hasBranch && state.availableBranches.isNotEmpty) {
+          context.go('/select-branch');
+        }
+      }
+    });
+    
+    // Only continue initialization if we have a branch
+    if (_activeBranch == null) {
+      LoggingService.instance.warning('Kiosk', 'No branch set, waiting for selection');
+      return;
+    }
+    
     // Load settings
     await _settingsService.initialize();
     _settings = _settingsService.currentState;
     
     // Subscribe to settings changes
     _settingsSubscription = _settingsService.settingsStream.listen((state) {
-      setState(() => _settings = state);
+      if (mounted) {
+        setState(() => _settings = state);
+      }
     });
     
     // Start clock timer
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() => _currentTime = DateTime.now());
+      if (mounted) {
+        setState(() => _currentTime = DateTime.now());
+      }
     });
     
     // Generate QR code if enabled
@@ -113,6 +142,7 @@ class _KioskScreenState extends State<KioskScreen> {
     _clockTimer?.cancel();
     _logoTapTimer?.cancel();
     _settingsSubscription?.cancel();
+    _branchSubscription?.cancel();
     super.dispose();
   }
   
@@ -172,7 +202,8 @@ class _KioskScreenState extends State<KioskScreen> {
     if (!_settings.showLastAttendance) return;
     
     try {
-      final branchId = AuthService.instance.currentBranch?.id;
+      // Use BranchContextService for branch ID (single source of truth)
+      final branchId = _branchService.activeBranchId;
       if (branchId == null) return;
       
       final records = await _attendanceRepository.getByBranchDate(branchId, DateTime.now());
@@ -371,6 +402,11 @@ class _KioskScreenState extends State<KioskScreen> {
   
   @override
   Widget build(BuildContext context) {
+    // Check if we have a branch context - this is CRITICAL
+    if (_activeBranch == null) {
+      return _buildNoBranchScreen();
+    }
+    
     // FIXED: Use Focus widget with proper onKeyEvent handler for reliable keyboard shortcuts
     return Focus(
       focusNode: _keyboardFocusNode,
@@ -417,6 +453,123 @@ class _KioskScreenState extends State<KioskScreen> {
     );
   }
   
+  /// Build the "No Branch Selected" error screen
+  Widget _buildNoBranchScreen() {
+    return Scaffold(
+      backgroundColor: AppTheme.backgroundColor,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Error Icon
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: AppTheme.warningColor.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.store_mall_directory_outlined,
+                    size: 64,
+                    color: AppTheme.warningColor,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                
+                // Error Title
+                const Text(
+                  'Branch Not Selected',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                
+                // Error Description
+                Text(
+                  'This device is not configured for any pharmacy branch.\nPlease select a branch to continue.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: AppTheme.textSecondary,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 32),
+                
+                // Action Button
+                ElevatedButton.icon(
+                  onPressed: () => context.go('/select-branch'),
+                  icon: const Icon(Icons.store),
+                  label: const Text('Select Branch'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Admin Access Link
+                TextButton.icon(
+                  onPressed: () => context.go('/login'),
+                  icon: const Icon(Icons.admin_panel_settings, size: 18),
+                  label: const Text('Admin Login'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.textSecondary,
+                  ),
+                ),
+                
+                const SizedBox(height: 48),
+                
+                // Help Text
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.blue.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.info_outline,
+                        size: 20,
+                        color: Colors.blue.shade700,
+                      ),
+                      const SizedBox(width: 12),
+                      Flexible(
+                        child: Text(
+                          'If you are an employee, please contact your administrator.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
@@ -455,7 +608,7 @@ class _KioskScreenState extends State<KioskScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    AuthService.instance.currentBranch?.name ?? 'Pharmacy Attendance',
+                    _activeBranch?.name ?? 'Pharmacy Attendance',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,

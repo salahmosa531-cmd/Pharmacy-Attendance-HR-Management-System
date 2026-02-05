@@ -9,6 +9,8 @@ import '../../data/repositories/branch_repository.dart';
 import '../../data/repositories/audit_repository.dart';
 import '../../data/models/audit_log_model.dart';
 import '../constants/app_constants.dart';
+import 'branch_context_service.dart';
+import 'logging_service.dart';
 
 /// Authentication service for user login/logout
 class AuthService {
@@ -139,6 +141,16 @@ class AuthService {
       _currentBranch = await _branchRepository.getMainBranch();
     }
     
+    // Sync with BranchContextService for consistent branch context
+    if (_currentBranch != null) {
+      try {
+        await BranchContextService.instance.setActiveBranch(_currentBranch!);
+        LoggingService.instance.info('Auth', 'Synced branch context to ${_currentBranch!.name}');
+      } catch (e) {
+        LoggingService.instance.warning('Auth', 'Failed to sync branch context: $e');
+      }
+    }
+    
     // Log the login
     await _auditRepository.log(
       id: _uuid.v4(),
@@ -261,25 +273,30 @@ class AuthService {
       throw Exception('System already initialized');
     }
     
-    // Create the main branch
-    final now = DateTime.now();
-    final branch = Branch(
-      id: _uuid.v4(),
+    LoggingService.instance.info('Auth', 'Creating initial setup with branch: $branchName');
+    
+    // Create the main branch with default shifts using BranchContextService
+    final branch = await BranchContextService.instance.createBranchWithDefaults(
       name: branchName,
-      isMainBranch: true,
-      createdAt: now,
-      updatedAt: now,
+      setAsActive: true, // This is the first branch, so set it as active
     );
     
-    await _branchRepository.insert(branch);
+    // Set as main branch
+    await _branchRepository.setAsMainBranch(branch.id);
+    
+    LoggingService.instance.info('Auth', 'Created main branch: ${branch.id}');
     
     // Create super admin user
-    return await registerUser(
+    final user = await registerUser(
       username: username,
       password: password,
       role: UserRole.superAdmin,
       branchId: branch.id,
     );
+    
+    LoggingService.instance.info('Auth', 'Created super admin user: ${user.id}');
+    
+    return user;
   }
   
   /// Check if system needs initial setup

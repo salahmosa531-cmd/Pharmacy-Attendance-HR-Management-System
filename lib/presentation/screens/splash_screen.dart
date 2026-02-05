@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/services/auth_service.dart';
+import '../../core/services/branch_context_service.dart';
+import '../../core/services/logging_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/constants/app_constants.dart';
 
@@ -58,16 +60,31 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     if (!mounted) return;
     
     final authService = AuthService.instance;
+    final branchService = BranchContextService.instance;
     final needsSetup = await authService.needsInitialSetup();
     
     if (!mounted) return;
     
+    // Navigation Flow:
+    // 1. If needs setup (no users) -> /setup
+    // 2. If no branches available -> /setup 
+    // 3. If has branch (auto-selected or previously selected) -> /kiosk
+    // 4. If has branches but none selected -> /select-branch
+    
     if (needsSetup) {
+      LoggingService.instance.navigation('/', '/setup', 'needs initial setup');
       context.go('/setup');
-    } else {
+    } else if (branchService.state.availableBranches.isEmpty) {
+      LoggingService.instance.navigation('/', '/setup', 'no branches available');
+      context.go('/setup');
+    } else if (branchService.hasBranch) {
+      LoggingService.instance.navigation('/', '/kiosk', 'branch available: ${branchService.activeBranch?.name}');
       // Default to Kiosk mode - the public attendance screen
       // Admin can access dashboard via hidden shortcut (Ctrl+Shift+A) or login
       context.go('/kiosk');
+    } else {
+      LoggingService.instance.navigation('/', '/select-branch', 'branch selection required');
+      context.go('/select-branch');
     }
   }
   
@@ -95,7 +112,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                         borderRadius: BorderRadius.circular(30),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
+                            color: Colors.black.withValues(alpha: 0.2),
                             blurRadius: 20,
                             offset: const Offset(0, 10),
                           ),
@@ -128,7 +145,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                       'HR Management System',
                       style: TextStyle(
                         fontSize: 16,
-                        color: Colors.white.withOpacity(0.9),
+                        color: Colors.white.withValues(alpha: 0.9),
                         letterSpacing: 0.5,
                       ),
                     ),
@@ -152,7 +169,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                       'Version ${AppConstants.appVersion}',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.white.withOpacity(0.7),
+                        color: Colors.white.withValues(alpha: 0.7),
                       ),
                     ),
                   ],

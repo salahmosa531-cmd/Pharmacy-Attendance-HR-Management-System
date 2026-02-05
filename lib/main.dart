@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 import 'core/services/database_service.dart';
 import 'core/services/settings_service.dart';
 import 'core/services/logging_service.dart';
+import 'core/services/branch_context_service.dart';
 import 'app.dart';
 
 void main() async {
@@ -52,9 +53,20 @@ void main() async {
   // Clean up old log files
   await LoggingService.instance.cleanupOldLogs();
   
-  // Initialize settings service (loads settings from DB)
-  await SettingsService.instance.initialize();
-  LoggingService.instance.info('App', 'Settings service initialized');
+  // Initialize branch context service (handles branch selection and auto-selection)
+  // This will also initialize SettingsService if a branch is already selected
+  await BranchContextService.instance.initialize();
+  LoggingService.instance.info('App', 'Branch context service initialized');
+  
+  // Log branch context state
+  final branchState = BranchContextService.instance.state;
+  if (branchState.hasBranch) {
+    LoggingService.instance.info('App', 'Active branch: ${branchState.activeBranch!.name}');
+  } else if (branchState.availableBranches.isEmpty) {
+    LoggingService.instance.info('App', 'No branches available - needs setup');
+  } else {
+    LoggingService.instance.info('App', 'Branch selection required - ${branchState.availableBranches.length} branches available');
+  }
   
   LoggingService.instance.info('App', 'Application startup complete');
   

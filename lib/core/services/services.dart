@@ -9,3 +9,4 @@ export 'diagnostic_service.dart';
 export 'license_service.dart';
 export 'settings_service.dart';
 export 'logging_service.dart';
+export 'branch_context_service.dart';

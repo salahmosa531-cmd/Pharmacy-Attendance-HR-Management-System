@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../core/services/auth_service.dart';
+import '../core/services/branch_context_service.dart';
 import '../core/services/logging_service.dart';
 import '../presentation/screens/splash_screen.dart';
 import '../presentation/screens/setup_screen.dart';
 import '../presentation/screens/login_screen.dart';
 import '../presentation/screens/kiosk_screen.dart';
+import '../presentation/screens/branch_selection_screen.dart';
 import '../presentation/screens/main_shell.dart';
 import '../presentation/screens/dashboard_screen.dart';
 import '../presentation/screens/attendance_screen.dart';
@@ -25,9 +27,15 @@ import '../presentation/screens/branches_screen.dart';
 /// Navigation Flow:
 /// 1. Splash Screen - Initial loading
 /// 2. Setup Screen - First-time setup (if no users exist)
-/// 3. Kiosk Screen - DEFAULT screen for employee attendance (PUBLIC)
-/// 4. Login Screen - Admin access (accessed via hidden shortcut in Kiosk)
-/// 5. Admin Dashboard - Full admin features (requires login)
+/// 3. Branch Selection - Select branch (if multiple branches, none selected)
+/// 4. Kiosk Screen - DEFAULT screen for employee attendance (PUBLIC)
+/// 5. Login Screen - Admin access (accessed via hidden shortcut in Kiosk)
+/// 6. Admin Dashboard - Full admin features (requires login)
+/// 
+/// Critical Rules:
+/// - Kiosk NEVER works without a branch context
+/// - Branch must be selected before any attendance operations
+/// - Admin login sets branch context automatically
 class AppRouter {
   static final _rootNavigatorKey = GlobalKey<NavigatorState>();
   static final _shellNavigatorKey = GlobalKey<NavigatorState>();
@@ -38,14 +46,18 @@ class AppRouter {
     debugLogDiagnostics: false, // Disable in production
     redirect: (context, state) async {
       final authService = AuthService.instance;
+      final branchService = BranchContextService.instance;
       final isLoggedIn = authService.isLoggedIn;
       final needsSetup = await authService.needsInitialSetup();
+      final hasBranch = branchService.hasBranch;
+      final hasBranches = branchService.state.availableBranches.isNotEmpty;
       
       final currentPath = state.matchedLocation;
       final isSplash = currentPath == '/';
       final isSetup = currentPath == '/setup';
       final isLogin = currentPath == '/login';
-      // isKiosk is not used in redirect logic since kiosk is always accessible
+      final isKiosk = currentPath == '/kiosk';
+      final isBranchSelection = currentPath == '/select-branch';
       final isAdminRoute = currentPath.startsWith('/admin') || 
                           currentPath.startsWith('/dashboard') ||
                           currentPath.startsWith('/employees') ||
@@ -60,7 +72,7 @@ class AppRouter {
       // Log navigation attempt
       final logger = LoggingService.instance;
       
-      // First check if system needs setup
+      // 1. First check if system needs setup (no users = first time)
       if (needsSetup && !isSetup && !isSplash) {
         logger.navigation(currentPath, '/setup', 'needs initial setup');
         return '/setup';
@@ -71,18 +83,36 @@ class AppRouter {
         return null;
       }
       
-      // After setup/splash, redirect to kiosk (default public screen)
+      // 2. Let splash handle its own navigation
       if (isSplash) {
-        return null; // Let splash handle navigation
+        return null;
       }
       
-      // Admin routes require login
+      // 3. If trying to access kiosk without a branch, redirect to branch selection
+      if (isKiosk && !hasBranch && hasBranches) {
+        logger.navigation(currentPath, '/select-branch', 'kiosk requires branch');
+        return '/select-branch';
+      }
+      
+      // 4. If trying to access kiosk without any branches, go to setup
+      if (isKiosk && !hasBranches) {
+        logger.navigation(currentPath, '/setup', 'no branches available');
+        return '/setup';
+      }
+      
+      // 5. If on branch selection and already have a branch, go to kiosk
+      if (isBranchSelection && hasBranch) {
+        logger.navigation(currentPath, '/kiosk', 'branch already selected');
+        return '/kiosk';
+      }
+      
+      // 6. Admin routes require login
       if (isAdminRoute && !isLoggedIn) {
         logger.navigation(currentPath, '/login', 'admin route requires login');
         return '/login';
       }
       
-      // If logged in and trying to access login, redirect to dashboard
+      // 7. If logged in and trying to access login, redirect to dashboard
       if (isLoggedIn && isLogin) {
         logger.navigation(currentPath, '/dashboard', 'already logged in');
         return '/dashboard';
@@ -107,6 +137,12 @@ class AppRouter {
       GoRoute(
         path: '/kiosk',
         builder: (context, state) => const KioskScreen(),
+      ),
+      
+      // Branch Selection - Required when no branch is selected
+      GoRoute(
+        path: '/select-branch',
+        builder: (context, state) => const BranchSelectionScreen(),
       ),
       
       // Login - Admin access

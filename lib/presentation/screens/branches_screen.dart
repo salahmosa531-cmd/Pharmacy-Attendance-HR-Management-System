@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/branch_context_service.dart';
 import '../../data/models/branch_model.dart';
 import '../../data/repositories/branch_repository.dart';
 import '../../data/repositories/employee_repository.dart';
+import '../../data/repositories/shift_repository.dart';
 
 /// Branches management screen (enterprise feature)
 class BranchesScreen extends StatefulWidget {
@@ -17,13 +18,15 @@ class BranchesScreen extends StatefulWidget {
 
 class _BranchesScreenState extends State<BranchesScreen> {
   final AuthService _authService = AuthService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final BranchRepository _branchRepository = BranchRepository.instance;
   final EmployeeRepository _employeeRepository = EmployeeRepository.instance;
-  final Uuid _uuid = const Uuid();
+  final ShiftRepository _shiftRepository = ShiftRepository.instance;
   
   bool _isLoading = true;
   List<Branch> _branches = [];
   Map<String, int> _employeeCounts = {};
+  Map<String, int> _shiftCounts = {};
   
   final _dateFormat = DateFormat('MMM dd, yyyy');
   
@@ -39,10 +42,13 @@ class _BranchesScreenState extends State<BranchesScreen> {
     try {
       _branches = await _branchRepository.getAll();
       
-      // Get employee counts
+      // Get employee and shift counts
       for (final branch in _branches) {
-        final count = await _employeeRepository.getCountByBranch(branch.id);
-        _employeeCounts[branch.id] = count;
+        final empCount = await _employeeRepository.getCountByBranch(branch.id);
+        _employeeCounts[branch.id] = empCount;
+        
+        final shiftCount = await _shiftRepository.getCountByBranch(branch.id);
+        _shiftCounts[branch.id] = shiftCount;
       }
       
       setState(() => _isLoading = false);
@@ -147,41 +153,54 @@ class _BranchesScreenState extends State<BranchesScreen> {
                   return;
                 }
                 
-                final now = DateTime.now();
-                final newBranch = Branch(
-                  id: branch?.id ?? _uuid.v4(),
-                  name: nameController.text.trim(),
-                  address: addressController.text.trim().isNotEmpty
-                      ? addressController.text.trim()
-                      : null,
-                  phone: phoneController.text.trim().isNotEmpty
-                      ? phoneController.text.trim()
-                      : null,
-                  email: emailController.text.trim().isNotEmpty
-                      ? emailController.text.trim()
-                      : null,
-                  isMainBranch: branch?.isMainBranch ?? false,
-                  isActive: isActive,
-                  createdAt: branch?.createdAt ?? now,
-                  updatedAt: now,
-                );
-                
                 try {
                   if (isEditing) {
-                    await _branchRepository.update(newBranch, newBranch.id);
+                    // Update existing branch
+                    final now = DateTime.now();
+                    final updatedBranch = branch!.copyWith(
+                      name: nameController.text.trim(),
+                      address: addressController.text.trim().isNotEmpty
+                          ? addressController.text.trim()
+                          : null,
+                      phone: phoneController.text.trim().isNotEmpty
+                          ? phoneController.text.trim()
+                          : null,
+                      email: emailController.text.trim().isNotEmpty
+                          ? emailController.text.trim()
+                          : null,
+                      isActive: isActive,
+                      updatedAt: now,
+                    );
+                    await _branchRepository.update(updatedBranch, updatedBranch.id);
                   } else {
-                    await _branchRepository.insert(newBranch);
+                    // Use BranchContextService to create branch with defaults
+                    // This creates default shifts automatically
+                    await _branchContextService.createBranchWithDefaults(
+                      name: nameController.text.trim(),
+                      address: addressController.text.trim().isNotEmpty
+                          ? addressController.text.trim()
+                          : null,
+                      phone: phoneController.text.trim().isNotEmpty
+                          ? phoneController.text.trim()
+                          : null,
+                      email: emailController.text.trim().isNotEmpty
+                          ? emailController.text.trim()
+                          : null,
+                      setAsActive: false, // Don't change active branch automatically
+                    );
                   }
                   
-                  Navigator.pop(context);
+                  if (context.mounted) Navigator.pop(context);
                   _loadBranches();
                 } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Error: $e'),
-                      backgroundColor: AppTheme.errorColor,
-                    ),
-                  );
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error: $e'),
+                        backgroundColor: AppTheme.errorColor,
+                      ),
+                    );
+                  }
                 }
               },
               child: Text(isEditing ? 'Save' : 'Add'),
@@ -420,6 +439,7 @@ class _BranchesScreenState extends State<BranchesScreen> {
   
   Widget _buildBranchTile(Branch branch) {
     final employeeCount = _employeeCounts[branch.id] ?? 0;
+    final shiftCount = _shiftCounts[branch.id] ?? 0;
     
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -489,6 +509,13 @@ class _BranchesScreenState extends State<BranchesScreen> {
               const SizedBox(width: 4),
               Text(
                 '$employeeCount employees',
+                style: TextStyle(color: AppTheme.textSecondary),
+              ),
+              const SizedBox(width: 16),
+              Icon(Icons.schedule, size: 16, color: AppTheme.textSecondary),
+              const SizedBox(width: 4),
+              Text(
+                '$shiftCount shifts',
                 style: TextStyle(color: AppTheme.textSecondary),
               ),
               const SizedBox(width: 16),
