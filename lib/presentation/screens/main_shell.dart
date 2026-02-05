@@ -3,9 +3,11 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/services/auth_service.dart';
+import '../../core/services/branch_context_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/app_localizations.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/security/route_permissions.dart';
 import '../providers/app_state_provider.dart';
 
 /// Main shell with navigation rail for the application
@@ -20,6 +22,7 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   bool _isRailExtended = true;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   
   int _getSelectedIndex(BuildContext context) {
     final location = GoRouterState.of(context).matchedLocation;
@@ -72,12 +75,45 @@ class _MainShellState extends State<MainShell> {
   // Navigation rail width constants
   static const double _collapsedRailWidth = 72.0;
   static const double _expandedRailWidth = 240.0;
+
+  Widget _buildUnauthorizedView(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_outline, size: 64, color: AppTheme.errorColor),
+            const SizedBox(height: 16),
+            const Text(
+              'Access Denied',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'You do not have permission to view this screen.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: () => context.go('/kiosk'),
+              icon: const Icon(Icons.arrow_back),
+              label: const Text('Go to Kiosk'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
   
   @override
   Widget build(BuildContext context) {
     final authService = AuthService.instance;
+    final location = GoRouterState.of(context).matchedLocation;
     final selectedIndex = _getSelectedIndex(context);
     final railWidth = _isRailExtended ? _expandedRailWidth : _collapsedRailWidth;
+    final requiredPermission = RoutePermissions.requiredPermission(location);
+    final isAuthorized = requiredPermission == null || authService.hasPermission(requiredPermission);
     
     return Scaffold(
       body: Row(
@@ -135,7 +171,7 @@ class _MainShellState extends State<MainShell> {
                                 maxLines: 1,
                               ),
                               Text(
-                                authService.currentBranch?.name ?? 'Attendance',
+                                _branchContextService.activeBranch?.name ?? 'Attendance',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: AppTheme.textSecondary,
@@ -426,7 +462,7 @@ class _MainShellState extends State<MainShell> {
                 
                 // Page content
                 Expanded(
-                  child: widget.child,
+                  child: isAuthorized ? widget.child : _buildUnauthorizedView(context),
                 ),
               ],
             ),
@@ -588,7 +624,7 @@ class _MainShellState extends State<MainShell> {
                 Navigator.pop(context);
                 await authService.logout();
                 if (context.mounted) {
-                  context.go('/login');
+                  context.go('/kiosk');
                 }
               },
             ),

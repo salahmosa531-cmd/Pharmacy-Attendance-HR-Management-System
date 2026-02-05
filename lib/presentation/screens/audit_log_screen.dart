@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/branch_context_service.dart';
 import '../../data/models/audit_log_model.dart';
 import '../../data/repositories/audit_repository.dart';
 
@@ -15,6 +16,7 @@ class AuditLogScreen extends StatefulWidget {
 
 class _AuditLogScreenState extends State<AuditLogScreen> {
   final AuthService _authService = AuthService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final AuditRepository _auditRepository = AuditRepository.instance;
   
   bool _isLoading = true;
@@ -34,7 +36,7 @@ class _AuditLogScreenState extends State<AuditLogScreen> {
   }
   
   Future<void> _loadLogs() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _branchContextService.activeBranchId;
     if (branchId == null) return;
     
     setState(() => _isLoading = true);

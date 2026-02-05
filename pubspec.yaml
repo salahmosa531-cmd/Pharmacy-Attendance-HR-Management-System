@@ -72,6 +72,7 @@ dependencies:
   
   # Settings persistence
   shared_preferences: ^2.2.2
+  flutter_secure_storage: ^9.2.2
   
   # Camera for QR scanning
   camera: ^0.10.5+9
