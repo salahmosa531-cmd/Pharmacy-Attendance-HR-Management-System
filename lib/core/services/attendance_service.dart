@@ -10,7 +10,9 @@ import '../../data/repositories/shift_repository.dart';
 import '../../data/repositories/audit_repository.dart';
 import '../constants/app_constants.dart';
 import 'auth_service.dart';
+import 'branch_context_service.dart';
 import 'device_service.dart';
+import 'logging_service.dart';
 
 /// Service for handling attendance operations
 class AttendanceService {
@@ -21,8 +23,12 @@ class AttendanceService {
   final ShiftRepository _shiftRepository = ShiftRepository.instance;
   final AuditRepository _auditRepository = AuditRepository.instance;
   final AuthService _authService = AuthService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final DeviceService _deviceService = DeviceService.instance;
   final Uuid _uuid = const Uuid();
+  
+  /// Get the active branch ID - uses BranchContextService as single source of truth
+  String? get _activeBranchId => _branchContextService.activeBranchId;
   
   AttendanceService._();
   
@@ -37,9 +43,11 @@ class AttendanceService {
     required AttendanceMethod method,
     String? qrToken,
   }) async {
-    final branchId = _authService.currentBranch?.id;
+    // Use BranchContextService as single source of truth for branch ID
+    final branchId = _activeBranchId;
     if (branchId == null) {
-      throw Exception('No branch selected');
+      LoggingService.instance.error('Attendance', 'Clock in failed: No branch selected');
+      throw Exception('Branch not configured. Please select a branch first.');
     }
     
     final deviceId = await _deviceService.getDeviceId();
@@ -129,9 +137,11 @@ class AttendanceService {
     required String employeeIdentifier,
     required AttendanceMethod method,
   }) async {
-    final branchId = _authService.currentBranch?.id;
+    // Use BranchContextService as single source of truth for branch ID
+    final branchId = _activeBranchId;
     if (branchId == null) {
-      throw Exception('No branch selected');
+      LoggingService.instance.error('Attendance', 'Clock out failed: No branch selected');
+      throw Exception('Branch not configured. Please select a branch first.');
     }
     
     final deviceId = await _deviceService.getDeviceId();
@@ -307,9 +317,9 @@ class AttendanceService {
   
   /// Get today's attendance for current branch
   Future<List<AttendanceRecord>> getTodayAttendance() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _activeBranchId;
     if (branchId == null) {
-      throw Exception('No branch selected');
+      throw Exception('Branch not configured. Please select a branch first.');
     }
     
     return await _attendanceRepository.getByBranchDate(branchId, DateTime.now());
@@ -317,9 +327,9 @@ class AttendanceService {
   
   /// Get currently clocked in employees
   Future<List<Map<String, dynamic>>> getCurrentlyClockedIn() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _activeBranchId;
     if (branchId == null) {
-      throw Exception('No branch selected');
+      throw Exception('Branch not configured. Please select a branch first.');
     }
     
     return await _attendanceRepository.getCurrentlyClockedIn(branchId);
@@ -327,9 +337,9 @@ class AttendanceService {
   
   /// Get late arrivals for today
   Future<List<Map<String, dynamic>>> getTodayLateArrivals() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _activeBranchId;
     if (branchId == null) {
-      throw Exception('No branch selected');
+      throw Exception('Branch not configured. Please select a branch first.');
     }
     
     return await _attendanceRepository.getLateArrivals(branchId, DateTime.now());
@@ -337,9 +347,9 @@ class AttendanceService {
   
   /// Get absent employees for today
   Future<List<Map<String, dynamic>>> getTodayAbsentees() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _activeBranchId;
     if (branchId == null) {
-      throw Exception('No branch selected');
+      throw Exception('Branch not configured. Please select a branch first.');
     }
     
     return await _attendanceRepository.getAbsentEmployees(branchId, DateTime.now());
@@ -347,9 +357,9 @@ class AttendanceService {
   
   /// Get attendance summary for current branch today
   Future<Map<String, dynamic>> getTodaySummary() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _activeBranchId;
     if (branchId == null) {
-      throw Exception('No branch selected');
+      throw Exception('Branch not configured. Please select a branch first.');
     }
     
     return await _attendanceRepository.getBranchDailySummary(branchId, DateTime.now());
@@ -357,9 +367,9 @@ class AttendanceService {
   
   /// Auto clock out missing (run at end of day)
   Future<int> autoClockOutMissing() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _activeBranchId;
     if (branchId == null) {
-      throw Exception('No branch selected');
+      throw Exception('Branch not configured. Please select a branch first.');
     }
     
     return await _attendanceRepository.autoClockOutMissing(branchId, DateTime.now());
