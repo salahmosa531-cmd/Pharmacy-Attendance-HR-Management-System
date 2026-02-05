@@ -21,6 +21,7 @@ import '../presentation/screens/payroll_screen.dart';
 import '../presentation/screens/settings_screen.dart';
 import '../presentation/screens/audit_log_screen.dart';
 import '../presentation/screens/branches_screen.dart';
+import '../core/security/route_permissions.dart';
 
 /// Application router configuration
 /// 
@@ -39,7 +40,7 @@ import '../presentation/screens/branches_screen.dart';
 class AppRouter {
   static final _rootNavigatorKey = GlobalKey<NavigatorState>();
   static final _shellNavigatorKey = GlobalKey<NavigatorState>();
-  
+
   static final GoRouter router = GoRouter(
     navigatorKey: _rootNavigatorKey,
     initialLocation: '/',
@@ -82,6 +83,13 @@ class AppRouter {
       if (needsSetup) {
         return null;
       }
+
+      // Prevent setup route access after initial setup is complete
+      if (!needsSetup && isSetup) {
+        final fallbackRoute = hasBranch ? '/kiosk' : '/select-branch';
+        logger.navigation(currentPath, fallbackRoute, 'setup already completed');
+        return fallbackRoute;
+      }
       
       // 2. Let splash handle its own navigation
       if (isSplash) {
@@ -94,10 +102,10 @@ class AppRouter {
         return '/select-branch';
       }
       
-      // 4. If trying to access kiosk without any branches, go to setup
+      // 4. If trying to access kiosk without any branches, route to branch selection help state
       if (isKiosk && !hasBranches) {
-        logger.navigation(currentPath, '/setup', 'no branches available');
-        return '/setup';
+        logger.navigation(currentPath, '/select-branch', 'no branches available');
+        return '/select-branch';
       }
       
       // 5. If on branch selection and already have a branch, go to kiosk
@@ -111,11 +119,21 @@ class AppRouter {
         logger.navigation(currentPath, '/login', 'admin route requires login');
         return '/login';
       }
+
+      // 7. Enforce route-level permissions for admin routes
+      if (isAdminRoute && isLoggedIn) {
+        final requiredPermission = RoutePermissions.requiredPermission(currentPath);
+        if (requiredPermission != null && !authService.hasPermission(requiredPermission)) {
+          logger.navigation(currentPath, '/kiosk', 'missing permission: $requiredPermission');
+          return '/kiosk';
+        }
+      }
       
-      // 7. If logged in and trying to access login, redirect to dashboard
+      // 8. If logged in and trying to access login, redirect to dashboard
       if (isLoggedIn && isLogin) {
-        logger.navigation(currentPath, '/dashboard', 'already logged in');
-        return '/dashboard';
+        final defaultRoute = authService.hasPermission('view_reports') ? '/dashboard' : '/kiosk';
+        logger.navigation(currentPath, defaultRoute, 'already logged in');
+        return defaultRoute;
       }
       
       return null;
@@ -262,18 +280,18 @@ class AppRouter {
             const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
             Text(
-              'Page not found',
+              'We couldn't find that page',
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 8),
             Text(
-              state.uri.toString(),
+              'The link might be outdated or invalid. Requested: ${state.uri}',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: () => context.go('/kiosk'),
-              child: const Text('Go to Attendance'),
+              child: const Text('Go to Kiosk'),
             ),
           ],
         ),

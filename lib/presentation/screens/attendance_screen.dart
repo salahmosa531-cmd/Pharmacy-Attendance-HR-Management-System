@@ -17,7 +17,6 @@ class AttendanceScreen extends StatefulWidget {
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
   final AttendanceService _attendanceService = AttendanceService.instance;
-  final AuthService _authService = AuthService.instance;
   final QrService _qrService = QrService.instance;
   final TextEditingController _codeController = TextEditingController();
   final FocusNode _codeFocusNode = FocusNode();
@@ -29,6 +28,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   String? _qrCode;
   Timer? _qrTimer;
   int _qrSecondsRemaining = 0;
+  String? _qrErrorMessage;
   
   @override
   void initState() {
@@ -51,6 +51,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       setState(() {
         _qrCode = data['token'] as String?;
         _qrSecondsRemaining = AppConstants.qrRefreshSeconds;
+        _qrErrorMessage = null;
       });
       
       _qrTimer?.cancel();
@@ -61,8 +62,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           _generateQrCode();
         }
       });
-    } catch (e) {
-      // Handle error
+    } catch (e, stack) {
+      LoggingService.instance.error('AttendanceScreen', 'Failed to generate QR code', e, stack);
+      setState(() {
+        _qrCode = null;
+        _qrErrorMessage = 'Unable to generate QR code.';
+      });
     }
   }
   
@@ -96,7 +101,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           _isError = false;
         });
       }
-    } catch (e) {
+    } catch (e, stack) {
+      LoggingService.instance.error('AttendanceScreen', 'Clock action failed', e, stack);
       setState(() {
         _message = e.toString().replaceAll('Exception: ', '');
         _isError = true;
@@ -313,7 +319,28 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                     ],
                                   ),
                                 )
-                              : const Center(child: CircularProgressIndicator()),
+                              : _qrErrorMessage != null
+                                  ? Center(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.error_outline, color: AppTheme.errorColor),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            _qrErrorMessage!,
+                                            style: const TextStyle(color: AppTheme.errorColor, fontSize: 12),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                          const SizedBox(height: 8),
+                                          TextButton.icon(
+                                            onPressed: _generateQrCode,
+                                            icon: const Icon(Icons.refresh),
+                                            label: const Text('Retry'),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : const Center(child: CircularProgressIndicator()),
                         ),
                         const SizedBox(height: 16),
                         

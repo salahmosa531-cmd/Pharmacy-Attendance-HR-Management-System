@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:uuid/uuid.dart';
 import '../constants/app_constants.dart';
 import 'database_service.dart';
-import 'auth_service.dart';
+import 'branch_context_service.dart';
 
 /// Central Settings Manager with stream-based reactive updates
 /// 
@@ -15,6 +15,7 @@ class SettingsService {
   static SettingsService? _instance;
   
   final DatabaseService _databaseService = DatabaseService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final Uuid _uuid = const Uuid();
   
   // Stream controller for settings changes
@@ -48,7 +49,7 @@ class SettingsService {
   /// Load all settings from database
   Future<void> _loadAllSettings([String? branchId]) async {
     final db = await _databaseService.database;
-    final effectiveBranchId = branchId ?? AuthService.instance.currentBranch?.id;
+    final effectiveBranchId = branchId ?? _branchContextService.activeBranchId;
     
     List<Map<String, dynamic>> results;
     if (effectiveBranchId != null) {
@@ -151,7 +152,7 @@ class SettingsService {
   /// Set a setting value - persists immediately and broadcasts change
   Future<void> setValue(String key, dynamic value, {String? category, String? description}) async {
     final db = await _databaseService.database;
-    final branchId = AuthService.instance.currentBranch?.id;
+    final branchId = _branchContextService.activeBranchId;
     final now = DateTime.now().toIso8601String();
     
     // Determine value type
@@ -241,7 +242,7 @@ class SettingsService {
   /// Reset all settings to defaults
   Future<void> resetToDefaults() async {
     final db = await _databaseService.database;
-    final branchId = AuthService.instance.currentBranch?.id;
+    final branchId = _branchContextService.activeBranchId;
     
     if (branchId != null) {
       await db.delete(

@@ -10,12 +10,14 @@ import '../../data/repositories/repositories.dart';
 import '../../data/models/audit_log_model.dart';
 import 'database_service.dart';
 import 'auth_service.dart';
+import 'branch_context_service.dart';
 
 /// Service for cloud synchronization and backup
 class SyncService {
   static SyncService? _instance;
   
   final DatabaseService _databaseService = DatabaseService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final AuthService _authService = AuthService.instance;
   final AuditRepository _auditRepository = AuditRepository.instance;
   final Uuid _uuid = const Uuid();
@@ -107,7 +109,7 @@ class SyncService {
     _status = SyncStatus.syncing;
     
     try {
-      final branchId = _authService.currentBranch?.id;
+      final branchId = _branchContextService.activeBranchId;
       if (branchId == null) {
         _status = SyncStatus.error;
         return SyncResult(
@@ -345,7 +347,7 @@ class SyncService {
     Transaction txn,
     List<Map<String, dynamic>> changes,
   ) async {
-    final currentBranch = _authService.currentBranch;
+    final currentBranch = _branchContextService.activeBranch;
     if (currentBranch == null) return;
 
     final hasBranchChange = changes.any(
@@ -463,7 +465,7 @@ class SyncService {
   /// Export database to JSON
   Future<String> exportToJson() async {
     final db = await _databaseService.database;
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _branchContextService.activeBranchId;
     
     final tables = [
       'branches',

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../data/models/user_model.dart';
 import '../../data/models/branch_model.dart';
 import '../../data/repositories/user_repository.dart';
@@ -13,6 +14,21 @@ import 'branch_context_service.dart';
 import 'logging_service.dart';
 
 /// Authentication service for user login/logout
+
+/// Session persistence policy for admin authentication.
+class AuthSessionPolicy {
+  /// If true, authenticated admin sessions are restored after app restart.
+  static const bool persistAdminSession = true;
+
+  /// Maximum age for persisted session before forced logout.
+  static const Duration maxSessionAge = Duration(days: 7);
+}
+
+class _SessionStorageKeys {
+  static const String userId = 'auth_session_user_id';
+  static const String issuedAt = 'auth_session_issued_at';
+}
+
 class AuthService {
   static AuthService? _instance;
   
@@ -20,9 +36,9 @@ class AuthService {
   final BranchRepository _branchRepository = BranchRepository.instance;
   final AuditRepository _auditRepository = AuditRepository.instance;
   final Uuid _uuid = const Uuid();
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   
   User? _currentUser;
-  Branch? _currentBranch;
   
   AuthService._();
   
@@ -34,8 +50,8 @@ class AuthService {
   /// Get current logged in user
   User? get currentUser => _currentUser;
   
-  /// Get current branch
-  Branch? get currentBranch => _currentBranch;
+  /// Get current branch from BranchContextService (single source of truth)
+  Branch? get currentBranch => BranchContextService.instance.activeBranch;
   
   /// Check if user is logged in
   bool get isLoggedIn => _currentUser != null;
@@ -132,29 +148,29 @@ class AuthService {
     await _userRepository.updateLastLogin(user.id);
     
     _currentUser = user.copyWith(lastLogin: DateTime.now());
-    
-    // Get user's branch
-    if (user.branchId != null) {
-      _currentBranch = await _branchRepository.getById(user.branchId!);
-    } else {
-      // Get main branch for super admin
-      _currentBranch = await _branchRepository.getMainBranch();
+
+    if (AuthSessionPolicy.persistAdminSession) {
+      await _persistSession(_currentUser!.id);
     }
     
-    // Sync with BranchContextService for consistent branch context
-    if (_currentBranch != null) {
+    // Resolve and set active branch using BranchContextService as single source of truth
+    final resolvedBranch = user.branchId != null
+        ? await _branchRepository.getById(user.branchId!)
+        : await _branchRepository.getMainBranch();
+
+    if (resolvedBranch != null) {
       try {
-        await BranchContextService.instance.setActiveBranch(_currentBranch!);
-        LoggingService.instance.info('Auth', 'Synced branch context to ${_currentBranch!.name}');
+        await BranchContextService.instance.setActiveBranch(resolvedBranch);
+        LoggingService.instance.info('Auth', 'Set branch context to ${resolvedBranch.name}');
       } catch (e) {
-        LoggingService.instance.warning('Auth', 'Failed to sync branch context: $e');
+        LoggingService.instance.warning('Auth', 'Failed to set branch context: $e');
       }
     }
     
     // Log the login
     await _auditRepository.log(
       id: _uuid.v4(),
-      branchId: _currentBranch?.id,
+      branchId: currentBranch?.id,
       userId: user.id,
       action: AuditAction.login,
       entityType: AuditEntityType.user,
@@ -171,7 +187,7 @@ class AuthService {
       // Log the logout
       await _auditRepository.log(
         id: _uuid.v4(),
-        branchId: _currentBranch?.id,
+        branchId: currentBranch?.id,
         userId: _currentUser!.id,
         action: AuditAction.logout,
         entityType: AuditEntityType.user,
@@ -180,7 +196,7 @@ class AuthService {
     }
     
     _currentUser = null;
-    _currentBranch = null;
+    await _clearPersistedSession();
   }
   
   /// Change password
@@ -228,7 +244,7 @@ class AuthService {
     // Log the action
     await _auditRepository.log(
       id: _uuid.v4(),
-      branchId: _currentBranch?.id,
+      branchId: currentBranch?.id,
       userId: _currentUser!.id,
       action: AuditAction.update,
       entityType: AuditEntityType.user,
@@ -253,7 +269,7 @@ class AuthService {
       throw Exception('Branch not found or inactive');
     }
     
-    _currentBranch = branch;
+    await BranchContextService.instance.setActiveBranch(branch);
   }
   
   /// Check if current user has permission
@@ -299,6 +315,62 @@ class AuthService {
     return user;
   }
   
+
+  /// Initialize and restore persisted admin session based on policy.
+  Future<void> initializeSession() async {
+    if (!AuthSessionPolicy.persistAdminSession) {
+      await _clearPersistedSession();
+      return;
+    }
+
+    try {
+      final persistedUserId = await _secureStorage.read(key: _SessionStorageKeys.userId);
+      final issuedAtRaw = await _secureStorage.read(key: _SessionStorageKeys.issuedAt);
+
+      if (persistedUserId == null || issuedAtRaw == null) {
+        return;
+      }
+
+      final issuedAt = DateTime.tryParse(issuedAtRaw);
+      if (issuedAt == null) {
+        await _clearPersistedSession();
+        return;
+      }
+
+      if (DateTime.now().difference(issuedAt) > AuthSessionPolicy.maxSessionAge) {
+        LoggingService.instance.info('Auth', 'Persisted session expired by policy');
+        await _clearPersistedSession();
+        return;
+      }
+
+      final user = await _userRepository.getById(persistedUserId);
+      if (user == null || !user.isActive) {
+        LoggingService.instance.warning('Auth', 'Persisted session user missing/inactive, clearing session');
+        await _clearPersistedSession();
+        return;
+      }
+
+      _currentUser = user;
+      LoggingService.instance.info('Auth', 'Restored persisted admin session for ${user.username}');
+    } catch (e, stack) {
+      LoggingService.instance.error('Auth', 'Failed to restore persisted session', e, stack);
+      await _clearPersistedSession();
+    }
+  }
+
+  Future<void> _persistSession(String userId) async {
+    await _secureStorage.write(key: _SessionStorageKeys.userId, value: userId);
+    await _secureStorage.write(
+      key: _SessionStorageKeys.issuedAt,
+      value: DateTime.now().toIso8601String(),
+    );
+  }
+
+  Future<void> _clearPersistedSession() async {
+    await _secureStorage.delete(key: _SessionStorageKeys.userId);
+    await _secureStorage.delete(key: _SessionStorageKeys.issuedAt);
+  }
+
   /// Check if system needs initial setup
   Future<bool> needsInitialSetup() async {
     final userCount = await _userRepository.count();

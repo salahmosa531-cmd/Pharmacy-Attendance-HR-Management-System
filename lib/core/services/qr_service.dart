@@ -4,15 +4,16 @@ import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/repositories/repositories.dart';
 import '../constants/app_constants.dart';
-import 'auth_service.dart';
+import 'branch_context_service.dart';
 import 'device_service.dart';
 import 'database_service.dart';
+import 'logging_service.dart';
 
 /// Service for QR code generation and validation (anti-fraud)
 class QrService {
   static QrService? _instance;
   
-  final AuthService _authService = AuthService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final DeviceService _deviceService = DeviceService.instance;
   final Uuid _uuid = const Uuid();
   final Random _random = Random.secure();
@@ -29,7 +30,7 @@ class QrService {
   
   /// Generate a new QR token
   Future<String> generateToken() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _branchContextService.activeBranchId;
     if (branchId == null) {
       throw Exception('No branch selected');
     }
@@ -120,7 +121,7 @@ class QrService {
       }
       
       // Check if token is from current branch
-      final currentBranchId = _authService.currentBranch?.id;
+      final currentBranchId = _branchContextService.activeBranchId;
       if (branchId != currentBranchId) {
         return QrValidationResult(
           isValid: false,
@@ -162,7 +163,8 @@ class QrService {
         deviceId: deviceId,
         token: token,
       );
-    } catch (e) {
+    } catch (e, stack) {
+      LoggingService.instance.error('QR', 'Failed to validate QR token', e, stack);
       return QrValidationResult(
         isValid: false,
         error: 'Invalid QR code format',
@@ -229,7 +231,7 @@ class QrService {
       'token': token,
       'generated_at': _tokenGeneratedAt?.toIso8601String(),
       'expires_in_seconds': AppConstants.qrRefreshSeconds,
-      'branch_name': _authService.currentBranch?.name,
+      'branch_name': _branchContextService.activeBranch?.name,
     };
   }
 }
