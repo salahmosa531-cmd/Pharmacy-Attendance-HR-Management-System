@@ -10,12 +10,14 @@ import '../../data/repositories/repositories.dart';
 import '../../data/models/audit_log_model.dart';
 import 'database_service.dart';
 import 'auth_service.dart';
+import 'branch_context_service.dart';
 
 /// Service for cloud synchronization and backup
 class SyncService {
   static SyncService? _instance;
   
   final DatabaseService _databaseService = DatabaseService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final AuthService _authService = AuthService.instance;
   final AuditRepository _auditRepository = AuditRepository.instance;
   final Uuid _uuid = const Uuid();
@@ -107,7 +109,7 @@ class SyncService {
     _status = SyncStatus.syncing;
     
     try {
-      final branchId = _authService.currentBranch?.id;
+      final branchId = _branchContextService.activeBranchId;
       if (branchId == null) {
         _status = SyncStatus.error;
         return SyncResult(
@@ -260,33 +262,134 @@ class SyncService {
   /// Apply downloaded changes
   Future<void> _applyChanges(List<Map<String, dynamic>> changes) async {
     final db = await _databaseService.database;
-    
-    for (final change in changes) {
-      final table = change['table'] as String;
-      final action = change['action'] as String;
-      final data = change['data'] as Map<String, dynamic>;
-      
-      switch (action) {
-        case 'create':
-        case 'update':
-          await db.insert(
-            table,
-            {
-              ...data,
-              'synced_at': DateTime.now().toIso8601String(),
-            },
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
-          break;
-        case 'delete':
-          await db.delete(
-            table,
-            where: 'id = ?',
-            whereArgs: [data['id']],
-          );
-          break;
+
+    if (changes.isEmpty) return;
+
+    await db.transaction((txn) async {
+      await _ensureActiveBranchExists(txn, changes);
+
+      final orderedChanges = _orderChangesByDependency(changes);
+
+      for (final change in orderedChanges) {
+        final table = change['table'] as String;
+        final action = change['action'] as String;
+        final data = Map<String, dynamic>.from(change['data'] as Map);
+
+        switch (action) {
+          case 'create':
+          case 'update':
+            await txn.insert(
+              table,
+              {
+                ...data,
+                'synced_at': DateTime.now().toIso8601String(),
+              },
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+            break;
+          case 'delete':
+            await txn.delete(
+              table,
+              where: 'id = ?',
+              whereArgs: [data['id']],
+            );
+            break;
+        }
       }
-    }
+    });
+  }
+
+  List<Map<String, dynamic>> _orderChangesByDependency(
+    List<Map<String, dynamic>> changes,
+  ) {
+    const insertOrder = {
+      'branches': 0,
+      'shifts': 1,
+      'employees': 2,
+      'users': 3,
+      'attendance_records': 4,
+    };
+
+    const deleteOrder = {
+      'attendance_records': 0,
+      'users': 1,
+      'employees': 2,
+      'shifts': 3,
+      'branches': 4,
+    };
+
+    final ordered = List<Map<String, dynamic>>.from(changes);
+    ordered.sort((a, b) {
+      final actionA = a['action'] as String? ?? '';
+      final actionB = b['action'] as String? ?? '';
+      final tableA = a['table'] as String? ?? '';
+      final tableB = b['table'] as String? ?? '';
+
+      final isDeleteA = actionA == 'delete';
+      final isDeleteB = actionB == 'delete';
+
+      if (isDeleteA != isDeleteB) {
+        return isDeleteA ? 1 : -1;
+      }
+
+      final map = isDeleteA ? deleteOrder : insertOrder;
+      final rankA = map[tableA] ?? 99;
+      final rankB = map[tableB] ?? 99;
+
+      if (rankA != rankB) return rankA.compareTo(rankB);
+      return 0;
+    });
+
+    return ordered;
+  }
+
+  Future<void> _ensureActiveBranchExists(
+    Transaction txn,
+    List<Map<String, dynamic>> changes,
+  ) async {
+    final currentBranch = _branchContextService.activeBranch;
+    if (currentBranch == null) return;
+
+    final hasBranchChange = changes.any(
+      (change) =>
+          change['table'] == 'branches' &&
+          (change['action'] == 'create' || change['action'] == 'update') &&
+          (change['data'] as Map?)?['id'] == currentBranch.id,
+    );
+
+    if (hasBranchChange) return;
+
+    final existingBranch = await txn.query(
+      'branches',
+      columns: ['id'],
+      where: 'id = ?',
+      whereArgs: [currentBranch.id],
+      limit: 1,
+    );
+
+    if (existingBranch.isNotEmpty) return;
+
+    await txn.insert(
+      'branches',
+      {
+        'id': currentBranch.id,
+        'name': currentBranch.name,
+        'address': currentBranch.address,
+        'phone': currentBranch.phone,
+        'email': currentBranch.email,
+        'is_main_branch': currentBranch.isMainBranch ? 1 : 0,
+        'owner_id': currentBranch.ownerId,
+        'device_id': currentBranch.deviceId,
+        'location_lat': currentBranch.locationLat,
+        'location_lng': currentBranch.locationLng,
+        'location_radius': currentBranch.locationRadius,
+        'is_active': currentBranch.isActive ? 1 : 0,
+        'created_at': currentBranch.createdAt.toIso8601String(),
+        'updated_at': currentBranch.updatedAt.toIso8601String(),
+        'synced_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
   
   /// Create local backup
@@ -362,7 +465,7 @@ class SyncService {
   /// Export database to JSON
   Future<String> exportToJson() async {
     final db = await _databaseService.database;
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _branchContextService.activeBranchId;
     
     final tables = [
       'branches',

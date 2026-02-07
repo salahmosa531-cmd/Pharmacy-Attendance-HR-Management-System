@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/branch_context_service.dart';
 import '../../data/models/shift_model.dart';
 import '../../data/repositories/shift_repository.dart';
 
@@ -20,6 +21,7 @@ class _ShiftFormScreenState extends State<ShiftFormScreen> {
   final _formKey = GlobalKey<FormState>();
   final ShiftRepository _shiftRepository = ShiftRepository.instance;
   final AuthService _authService = AuthService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final Uuid _uuid = const Uuid();
   
   bool _isLoading = true;
@@ -91,7 +93,7 @@ class _ShiftFormScreenState extends State<ShiftFormScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _branchContextService.activeBranchId;
     if (branchId == null) return;
     
     setState(() => _isSaving = true);

@@ -31,6 +31,37 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
   BranchContextState _state = const BranchContextState(isLoading: true);
   Branch? _selectedBranch;
   bool _isSubmitting = false;
+
+  static const Set<String> _allowedRedirectRoutes = {
+    '/kiosk',
+    '/dashboard',
+    '/attendance',
+    '/employees',
+    '/shifts',
+    '/reports',
+    '/payroll',
+    '/settings',
+    '/audit-log',
+    '/branches',
+    '/select-branch',
+    '/login',
+  };
+
+  String _resolveRedirectTarget(String? rawTarget) {
+    final target = rawTarget?.trim();
+    if (target == null || target.isEmpty) return '/kiosk';
+    final normalized = target.startsWith('/') ? target : '/$target';
+    final isAllowed = _allowedRedirectRoutes.any((allowed) =>
+        normalized == allowed || normalized.startsWith('$allowed/'));
+    if (!isAllowed) {
+      LoggingService.instance.warning(
+        'BranchSelection',
+        'Blocked invalid redirect target: $normalized',
+      );
+      return '/kiosk';
+    }
+    return normalized;
+  }
   
   @override
   void initState() {
@@ -60,7 +91,7 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
       LoggingService.instance.info('BranchSelection', 'Branch selected: ${_selectedBranch!.name}');
       
       if (mounted) {
-        final redirectTo = widget.redirectTo ?? '/kiosk';
+        final redirectTo = _resolveRedirectTarget(widget.redirectTo);
         context.go(redirectTo);
       }
     } catch (e) {
@@ -172,20 +203,27 @@ class _BranchSelectionScreenState extends State<BranchSelectionScreen> {
         ),
         const SizedBox(height: 8),
         const Text(
-          'Please contact your administrator to set up a branch,\nor complete the initial setup.',
+          'No active branches are available for this device.\nPlease contact your administrator to configure a branch.',
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 24),
         ElevatedButton.icon(
-          onPressed: () => context.go('/setup'),
-          icon: const Icon(Icons.settings),
-          label: const Text('Go to Setup'),
+          onPressed: () => _branchService.refreshBranches(),
+          icon: const Icon(Icons.refresh),
+          label: const Text('Retry'),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.primaryColor,
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
           ),
         ),
+        const SizedBox(height: 12),
+        TextButton.icon(
+          onPressed: () => context.go('/login'),
+          icon: const Icon(Icons.admin_panel_settings),
+          label: const Text('Admin Login'),
+        ),
+
       ],
     );
   }

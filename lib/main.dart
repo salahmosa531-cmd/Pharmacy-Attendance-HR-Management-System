@@ -6,6 +6,7 @@ import 'core/services/database_service.dart';
 import 'core/services/settings_service.dart';
 import 'core/services/logging_service.dart';
 import 'core/services/branch_context_service.dart';
+import 'core/services/auth_service.dart';
 import 'app.dart';
 
 void main() async {
@@ -58,6 +59,10 @@ void main() async {
   await BranchContextService.instance.initialize();
   LoggingService.instance.info('App', 'Branch context service initialized');
   
+  // Restore persisted admin session per auth policy
+  await AuthService.instance.initializeSession();
+  LoggingService.instance.info('App', 'Auth session policy evaluated');
+
   // Log branch context state
   final branchState = BranchContextService.instance.state;
   if (branchState.hasBranch) {

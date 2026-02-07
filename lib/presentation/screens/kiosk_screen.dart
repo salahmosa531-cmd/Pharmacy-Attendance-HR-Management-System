@@ -7,7 +7,6 @@ import '../../core/theme/app_theme.dart';
 import '../../core/services/services.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/repositories/repositories.dart';
-import '../../data/models/branch_model.dart';
 
 /// Kiosk Mode - Default screen for employee attendance
 /// 
@@ -45,6 +44,8 @@ class _KioskScreenState extends State<KioskScreen> {
   bool _isProcessing = false;
   String? _message;
   bool _isError = false;
+  String? _qrErrorMessage;
+  String? _recentRecordsErrorMessage;
   
   // QR Code
   String? _qrCode;
@@ -61,7 +62,9 @@ class _KioskScreenState extends State<KioskScreen> {
   
   // Branch context subscription
   StreamSubscription<BranchContextState>? _branchSubscription;
-  Branch? _activeBranch;
+  bool _isBranchInitialized = false;
+  String? _initializedBranchId;
+  bool _hasLoggedNoBranch = false;
   
   // Recent attendance records
   List<Map<String, dynamic>> _recentRecords = [];
@@ -81,55 +84,70 @@ class _KioskScreenState extends State<KioskScreen> {
   }
   
   Future<void> _initializeKiosk() async {
-    // Subscribe to branch context changes FIRST
-    _activeBranch = _branchService.activeBranch;
     _branchSubscription = _branchService.stateStream.listen((state) {
-      if (mounted) {
-        setState(() => _activeBranch = state.activeBranch);
-        
-        // If branch was cleared, redirect to branch selection
-        if (!state.hasBranch && state.availableBranches.isNotEmpty) {
-          context.go('/select-branch');
-        }
+      if (!mounted) return;
+
+      // If branch was cleared, redirect to branch selection
+      if (!state.hasBranch && state.availableBranches.isNotEmpty) {
+        context.go('/select-branch');
+        return;
       }
+
+      // Initialize kiosk context once branch becomes available
+      if (state.hasBranch && _branchService.activeBranchId != _initializedBranchId) {
+        _initializeForActiveBranch(force: true);
+        _hasLoggedNoBranch = false;
+      }
+
+      setState(() {});
     });
-    
-    // Only continue initialization if we have a branch
-    if (_activeBranch == null) {
+
+    if (_branchService.hasBranch) {
+      await _initializeForActiveBranch();
+    } else {
+      _hasLoggedNoBranch = true;
       LoggingService.instance.warning('Kiosk', 'No branch set, waiting for selection');
-      return;
     }
-    
+  }
+
+  Future<void> _initializeForActiveBranch({bool force = false}) async {
+    if (_isBranchInitialized && !force) return;
+
+    _isBranchInitialized = true;
+    _initializedBranchId = _branchService.activeBranchId;
+
     // Load settings
     await _settingsService.initialize();
     _settings = _settingsService.currentState;
-    
+
     // Subscribe to settings changes
-    _settingsSubscription = _settingsService.settingsStream.listen((state) {
+    _settingsSubscription ??= _settingsService.settingsStream.listen((state) {
       if (mounted) {
         setState(() => _settings = state);
       }
     });
-    
+
     // Start clock timer
-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    _clockTimer ??= Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() => _currentTime = DateTime.now());
       }
     });
-    
+
     // Generate QR code if enabled
     if (_settings.allowQrEntry) {
-      _generateQrCode();
+      await _generateQrCode();
     }
-    
+
     // Load recent records
-    _loadRecentRecords();
-    
+    await _loadRecentRecords();
+
     // Request focus on input
     _codeFocusNode.requestFocus();
-    
-    setState(() {});
+
+    if (mounted) {
+      setState(() {});
+    }
   }
   
   @override
@@ -183,6 +201,7 @@ class _KioskScreenState extends State<KioskScreen> {
       setState(() {
         _qrCode = data['token'] as String?;
         _qrSecondsRemaining = _settings.qrRefreshSeconds;
+        _qrErrorMessage = null;
       });
       
       _qrTimer?.cancel();
@@ -193,8 +212,12 @@ class _KioskScreenState extends State<KioskScreen> {
           _generateQrCode();
         }
       });
-    } catch (e) {
-      // Handle error silently
+    } catch (e, stack) {
+      LoggingService.instance.error('Kiosk', 'Failed to generate QR code', e, stack);
+      setState(() {
+        _qrCode = null;
+        _qrErrorMessage = 'Unable to generate QR code. Please try again.';
+      });
     }
   }
   
@@ -232,9 +255,14 @@ class _KioskScreenState extends State<KioskScreen> {
       
       setState(() {
         _recentRecords = recentWithNames.take(3).toList();
+        _recentRecordsErrorMessage = null;
       });
-    } catch (e) {
-      // Ignore errors
+    } catch (e, stack) {
+      LoggingService.instance.error('Kiosk', 'Failed to load recent attendance records', e, stack);
+      setState(() {
+        _recentRecords = [];
+        _recentRecordsErrorMessage = 'Unable to load recent activity.';
+      });
     }
   }
   
@@ -292,7 +320,8 @@ class _KioskScreenState extends State<KioskScreen> {
       
       // Reload recent records
       _loadRecentRecords();
-    } catch (e) {
+    } catch (e, stack) {
+      LoggingService.instance.error('Kiosk', 'Attendance processing failed', e, stack);
       setState(() {
         _message = e.toString().replaceAll('Exception: ', '');
         _isError = true;
@@ -403,7 +432,15 @@ class _KioskScreenState extends State<KioskScreen> {
   @override
   Widget build(BuildContext context) {
     // Check if we have a branch context - this is CRITICAL
-    if (_activeBranch == null) {
+    final activeBranch = _branchService.activeBranch;
+    if (activeBranch == null) {
+      if (!_hasLoggedNoBranch) {
+        _hasLoggedNoBranch = true;
+        LoggingService.instance.warning(
+          'Kiosk',
+          'Blocked attendance: no active branch configured',
+        );
+      }
       return _buildNoBranchScreen();
     }
     
@@ -455,114 +492,97 @@ class _KioskScreenState extends State<KioskScreen> {
   
   /// Build the "No Branch Selected" error screen
   Widget _buildNoBranchScreen() {
-    return Scaffold(
-      backgroundColor: AppTheme.backgroundColor,
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Error Icon
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: AppTheme.warningColor.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.store_mall_directory_outlined,
-                    size: 64,
-                    color: AppTheme.warningColor,
-                  ),
-                ),
-                const SizedBox(height: 32),
-                
-                // Error Title
-                const Text(
-                  'Branch Not Selected',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                
-                // Error Description
-                Text(
-                  'This device is not configured for any pharmacy branch.\nPlease select a branch to continue.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: AppTheme.textSecondary,
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 32),
-                
-                // Action Button
-                ElevatedButton.icon(
-                  onPressed: () => context.go('/select-branch'),
-                  icon: const Icon(Icons.store),
-                  label: const Text('Select Branch'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                
-                // Admin Access Link
-                TextButton.icon(
-                  onPressed: () => context.go('/login'),
-                  icon: const Icon(Icons.admin_panel_settings, size: 18),
-                  label: const Text('Admin Login'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppTheme.textSecondary,
-                  ),
-                ),
-                
-                const SizedBox(height: 48),
-                
-                // Help Text
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: Colors.blue.withValues(alpha: 0.2),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: 20,
-                        color: Colors.blue.shade700,
-                      ),
-                      const SizedBox(width: 12),
-                      Flexible(
-                        child: Text(
-                          'If you are an employee, please contact your administrator.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.blue.shade700,
-                          ),
+    return Focus(
+      focusNode: _keyboardFocusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: GestureDetector(
+        onTap: () => _keyboardFocusNode.requestFocus(),
+        child: Scaffold(
+          backgroundColor: AppTheme.backgroundColor,
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Error Icon (triple-tap for admin access)
+                    GestureDetector(
+                      onTap: _onLogoTap,
+                      child: Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          color: AppTheme.warningColor.withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.store_mall_directory_outlined,
+                          size: 64,
+                          color: AppTheme.warningColor,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // Error Title
+                    const Text(
+                      'No active branch configured',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Error Description
+                    Text(
+                      'This device is not configured for any pharmacy branch.\nContact your administrator to configure a branch.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: AppTheme.textSecondary,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 48),
+
+                    // Help Text
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Colors.blue.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            size: 20,
+                            color: Colors.blue.shade700,
+                          ),
+                          const SizedBox(width: 12),
+                          Flexible(
+                            child: Text(
+                              'If you are an employee, please contact your administrator.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.blue.shade700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -571,6 +591,8 @@ class _KioskScreenState extends State<KioskScreen> {
   }
   
   Widget _buildHeader() {
+    final activeBranch = _branchService.activeBranch;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
       decoration: BoxDecoration(
@@ -608,7 +630,7 @@ class _KioskScreenState extends State<KioskScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _activeBranch?.name ?? 'Pharmacy Attendance',
+                    activeBranch?.name ?? 'Pharmacy Attendance',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,
@@ -914,7 +936,28 @@ class _KioskScreenState extends State<KioskScreen> {
                                       ),
                                     ],
                                   )
-                                : const Center(child: CircularProgressIndicator()),
+                                : _qrErrorMessage != null
+                                    ? Center(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.qr_code_2, size: 64, color: AppTheme.errorColor),
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              _qrErrorMessage!,
+                                              textAlign: TextAlign.center,
+                                              style: const TextStyle(color: AppTheme.errorColor, fontSize: 12),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            TextButton.icon(
+                                              onPressed: _generateQrCode,
+                                              icon: const Icon(Icons.refresh),
+                                              label: const Text('Retry'),
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                    : const Center(child: CircularProgressIndicator()),
                           ),
                         ),
                       ),
@@ -926,7 +969,7 @@ class _KioskScreenState extends State<KioskScreen> {
           ],
           
           // Recent records
-          if (_settings.showLastAttendance && _recentRecords.isNotEmpty) ...[
+          if (_settings.showLastAttendance) ...[
             const Divider(height: 1),
             Padding(
               padding: const EdgeInsets.all(16),
@@ -941,7 +984,30 @@ class _KioskScreenState extends State<KioskScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  ..._recentRecords.map((record) => _buildRecentRecord(record)),
+                  if (_recentRecordsErrorMessage != null)
+                    Row(
+                      children: [
+                        const Icon(Icons.error_outline, size: 16, color: AppTheme.errorColor),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _recentRecordsErrorMessage!,
+                            style: const TextStyle(fontSize: 12, color: AppTheme.errorColor),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: _loadRecentRecords,
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    )
+                  else if (_recentRecords.isNotEmpty)
+                    ..._recentRecords.map((record) => _buildRecentRecord(record))
+                  else
+                    const Text(
+                      'No recent activity yet.',
+                      style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
                 ],
               ),
             ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/branch_context_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/employee_model.dart';
 import '../../data/models/payroll_model.dart';
@@ -18,6 +19,7 @@ class PayrollScreen extends StatefulWidget {
 
 class _PayrollScreenState extends State<PayrollScreen> {
   final AuthService _authService = AuthService.instance;
+  final BranchContextService _branchContextService = BranchContextService.instance;
   final EmployeeRepository _employeeRepository = EmployeeRepository.instance;
   final AttendanceRepository _attendanceRepository = AttendanceRepository.instance;
   
@@ -42,7 +44,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
   
   Future<void> _loadData() async {
-    final branchId = _authService.currentBranch?.id;
+    final branchId = _branchContextService.activeBranchId;
     if (branchId == null) return;
     
     setState(() => _isLoading = true);
