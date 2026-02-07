@@ -68,7 +68,9 @@ class AppRouter {
                           currentPath.startsWith('/settings') ||
                           currentPath.startsWith('/audit-log') ||
                           currentPath.startsWith('/branches') ||
-                          currentPath.startsWith('/attendance');
+                          currentPath.startsWith('/attendance') ||
+                          currentPath.startsWith('/financial') ||
+                          currentPath.startsWith('/suppliers');
       
       // Log navigation attempt
       final logger = LoggingService.instance;
@@ -267,6 +269,42 @@ class AppRouter {
             path: '/branches',
             pageBuilder: (context, state) => const NoTransitionPage(
               child: BranchesScreen(),
+            ),
+          ),
+          
+          // =========================================
+          // FINANCIAL MANAGEMENT ROUTES
+          // =========================================
+          
+          // Financial Dashboard
+          GoRoute(
+            path: '/financial-dashboard',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: FinancialDashboardScreen(),
+            ),
+          ),
+          
+          // Financial Shift Management
+          GoRoute(
+            path: '/financial-shift',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: FinancialShiftScreen(),
+            ),
+          ),
+          
+          // Financial Reports
+          GoRoute(
+            path: '/financial-reports',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: FinancialReportsScreen(),
+            ),
+          ),
+          
+          // Supplier Management
+          GoRoute(
+            path: '/suppliers',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: SuppliersScreen(),
             ),
           ),
         ],

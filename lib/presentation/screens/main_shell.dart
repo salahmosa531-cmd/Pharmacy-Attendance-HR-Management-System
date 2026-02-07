@@ -36,6 +36,11 @@ class _MainShellState extends State<MainShell> {
     if (location.startsWith('/settings')) return 6;
     if (location.startsWith('/audit-log')) return 7;
     if (location.startsWith('/branches')) return 8;
+    // Financial Management
+    if (location.startsWith('/financial-dashboard')) return 9;
+    if (location.startsWith('/financial-shift')) return 10;
+    if (location.startsWith('/financial-reports')) return 11;
+    if (location.startsWith('/suppliers')) return 12;
     
     return 0;
   }
@@ -68,6 +73,19 @@ class _MainShellState extends State<MainShell> {
         break;
       case 8:
         context.go('/branches');
+        break;
+      // Financial Management
+      case 9:
+        context.go('/financial-dashboard');
+        break;
+      case 10:
+        context.go('/financial-shift');
+        break;
+      case 11:
+        context.go('/financial-reports');
+        break;
+      case 12:
+        context.go('/suppliers');
         break;
     }
   }
@@ -248,6 +266,58 @@ class _MainShellState extends State<MainShell> {
                           selectedIcon: Icons.payment,
                           label: context.tr('payroll'),
                           isSelected: selectedIndex == 5,
+                        ),
+                        
+                        // Financial Management Section
+                        if (_isRailExtended)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 16, top: 16, bottom: 4),
+                            child: Text(
+                              'FINANCIAL',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          )
+                        else
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8),
+                            child: Divider(),
+                          ),
+                        _buildNavItem(
+                          context,
+                          index: 9,
+                          icon: Icons.account_balance_wallet_outlined,
+                          selectedIcon: Icons.account_balance_wallet,
+                          label: 'Financial Overview',
+                          isSelected: selectedIndex == 9,
+                        ),
+                        _buildNavItem(
+                          context,
+                          index: 10,
+                          icon: Icons.point_of_sale_outlined,
+                          selectedIcon: Icons.point_of_sale,
+                          label: 'Shift Finance',
+                          isSelected: selectedIndex == 10,
+                        ),
+                        _buildNavItem(
+                          context,
+                          index: 12,
+                          icon: Icons.business_outlined,
+                          selectedIcon: Icons.business,
+                          label: 'Suppliers',
+                          isSelected: selectedIndex == 12,
+                        ),
+                        _buildNavItem(
+                          context,
+                          index: 11,
+                          icon: Icons.analytics_outlined,
+                          selectedIcon: Icons.analytics,
+                          label: 'Financial Reports',
+                          isSelected: selectedIndex == 11,
                         ),
                         
                         if (authService.hasPermission('view_reports')) ...[
@@ -550,6 +620,15 @@ class _MainShellState extends State<MainShell> {
         return context.tr('audit_log');
       case 8:
         return context.tr('branches');
+      // Financial Management
+      case 9:
+        return 'Financial Overview';
+      case 10:
+        return 'Shift Finance';
+      case 11:
+        return 'Financial Reports';
+      case 12:
+        return 'Suppliers';
       default:
         return '';
     }
