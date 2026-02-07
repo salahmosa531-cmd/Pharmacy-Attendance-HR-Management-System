@@ -145,11 +145,12 @@ class BranchContextService {
         }
       }
       
-      // Auto-select if only one branch exists
-      if (activeBranch == null && branches.length == 1) {
-        activeBranch = branches.first;
-        await _persistActiveBranch(activeBranch.id);
-        LoggingService.instance.info('BranchContext', 'Auto-selected single branch: ${activeBranch.name}');
+      // Do not auto-select a branch; require explicit admin action.
+      if (activeBranch == null && branches.isNotEmpty) {
+        LoggingService.instance.info(
+          'BranchContext',
+          'Branch selection required (no active branch set)',
+        );
       }
       
       // Initialize settings if branch is set

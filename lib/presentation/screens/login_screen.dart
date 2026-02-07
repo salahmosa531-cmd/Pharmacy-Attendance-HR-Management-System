@@ -23,7 +23,6 @@ class _LoginScreenState extends State<LoginScreen> {
   
   bool _isLoading = false;
   bool _obscurePassword = true;
-  bool _rememberMe = false;
   String? _errorMessage;
   
   @override
@@ -282,24 +281,17 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             const SizedBox(height: 16),
                             
-                            // Remember me
-                            Row(
-                              children: [
-                                Checkbox(
-                                  value: _rememberMe,
-                                  onChanged: (value) {
-                                    setState(() => _rememberMe = value ?? false);
-                                  },
+                            // TODO: Enable cloud-based password reset when backend is available.
+                            const Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                'Contact admin to reset password',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppTheme.textSecondary,
                                 ),
-                                const Text('Remember me'),
-                                const Spacer(),
-                                TextButton(
-                                  onPressed: () {
-                                    // TODO: Implement forgot password
-                                  },
-                                  child: const Text('Forgot Password?'),
-                                ),
-                              ],
+                                textAlign: TextAlign.right,
+                              ),
                             ),
                             const SizedBox(height: 32),
                             

@@ -21,10 +21,6 @@ import '../presentation/screens/payroll_screen.dart';
 import '../presentation/screens/settings_screen.dart';
 import '../presentation/screens/audit_log_screen.dart';
 import '../presentation/screens/branches_screen.dart';
-import '../presentation/screens/financial_shift_screen.dart';
-import '../presentation/screens/financial_dashboard_screen.dart';
-import '../presentation/screens/financial_reports_screen.dart';
-import '../presentation/screens/suppliers_screen.dart';
 import '../core/security/route_permissions.dart';
 
 /// Application router configuration
@@ -322,7 +318,7 @@ class AppRouter {
             const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
             Text(
-              'We could not find that page',
+              'We couldn't find that page',
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 8),

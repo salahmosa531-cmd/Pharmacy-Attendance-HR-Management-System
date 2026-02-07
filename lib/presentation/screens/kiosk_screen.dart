@@ -64,6 +64,7 @@ class _KioskScreenState extends State<KioskScreen> {
   StreamSubscription<BranchContextState>? _branchSubscription;
   bool _isBranchInitialized = false;
   String? _initializedBranchId;
+  bool _hasLoggedNoBranch = false;
   
   // Recent attendance records
   List<Map<String, dynamic>> _recentRecords = [];
@@ -95,6 +96,7 @@ class _KioskScreenState extends State<KioskScreen> {
       // Initialize kiosk context once branch becomes available
       if (state.hasBranch && _branchService.activeBranchId != _initializedBranchId) {
         _initializeForActiveBranch(force: true);
+        _hasLoggedNoBranch = false;
       }
 
       setState(() {});
@@ -103,6 +105,7 @@ class _KioskScreenState extends State<KioskScreen> {
     if (_branchService.hasBranch) {
       await _initializeForActiveBranch();
     } else {
+      _hasLoggedNoBranch = true;
       LoggingService.instance.warning('Kiosk', 'No branch set, waiting for selection');
     }
   }
@@ -431,6 +434,13 @@ class _KioskScreenState extends State<KioskScreen> {
     // Check if we have a branch context - this is CRITICAL
     final activeBranch = _branchService.activeBranch;
     if (activeBranch == null) {
+      if (!_hasLoggedNoBranch) {
+        _hasLoggedNoBranch = true;
+        LoggingService.instance.warning(
+          'Kiosk',
+          'Blocked attendance: no active branch configured',
+        );
+      }
       return _buildNoBranchScreen();
     }
     
@@ -482,114 +492,97 @@ class _KioskScreenState extends State<KioskScreen> {
   
   /// Build the "No Branch Selected" error screen
   Widget _buildNoBranchScreen() {
-    return Scaffold(
-      backgroundColor: AppTheme.backgroundColor,
-      body: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Error Icon
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: AppTheme.warningColor.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.store_mall_directory_outlined,
-                    size: 64,
-                    color: AppTheme.warningColor,
-                  ),
-                ),
-                const SizedBox(height: 32),
-                
-                // Error Title
-                const Text(
-                  'Branch Not Selected',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                
-                // Error Description
-                Text(
-                  'This device is not configured for any pharmacy branch.\nPlease select a branch to continue.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: AppTheme.textSecondary,
-                    height: 1.5,
-                  ),
-                ),
-                const SizedBox(height: 32),
-                
-                // Action Button
-                ElevatedButton.icon(
-                  onPressed: () => context.go('/select-branch'),
-                  icon: const Icon(Icons.store),
-                  label: const Text('Select Branch'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                
-                // Admin Access Link
-                TextButton.icon(
-                  onPressed: () => context.go('/login'),
-                  icon: const Icon(Icons.admin_panel_settings, size: 18),
-                  label: const Text('Admin Login'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppTheme.textSecondary,
-                  ),
-                ),
-                
-                const SizedBox(height: 48),
-                
-                // Help Text
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: Colors.blue.withValues(alpha: 0.2),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.info_outline,
-                        size: 20,
-                        color: Colors.blue.shade700,
-                      ),
-                      const SizedBox(width: 12),
-                      Flexible(
-                        child: Text(
-                          'If you are an employee, please contact your administrator.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.blue.shade700,
-                          ),
+    return Focus(
+      focusNode: _keyboardFocusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: GestureDetector(
+        onTap: () => _keyboardFocusNode.requestFocus(),
+        child: Scaffold(
+          backgroundColor: AppTheme.backgroundColor,
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Error Icon (triple-tap for admin access)
+                    GestureDetector(
+                      onTap: _onLogoTap,
+                      child: Container(
+                        width: 120,
+                        height: 120,
+                        decoration: BoxDecoration(
+                          color: AppTheme.warningColor.withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.store_mall_directory_outlined,
+                          size: 64,
+                          color: AppTheme.warningColor,
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // Error Title
+                    const Text(
+                      'No active branch configured',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Error Description
+                    Text(
+                      'This device is not configured for any pharmacy branch.\nContact your administrator to configure a branch.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: AppTheme.textSecondary,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 48),
+
+                    // Help Text
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Colors.blue.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            size: 20,
+                            color: Colors.blue.shade700,
+                          ),
+                          const SizedBox(width: 12),
+                          Flexible(
+                            child: Text(
+                              'If you are an employee, please contact your administrator.',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.blue.shade700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),

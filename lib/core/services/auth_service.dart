@@ -18,7 +18,7 @@ import 'logging_service.dart';
 /// Session persistence policy for admin authentication.
 class AuthSessionPolicy {
   /// If true, authenticated admin sessions are restored after app restart.
-  static const bool persistAdminSession = true;
+  static const bool persistAdminSession = false;
 
   /// Maximum age for persisted session before forced logout.
   static const Duration maxSessionAge = Duration(days: 7);
