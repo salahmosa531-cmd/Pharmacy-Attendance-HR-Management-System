@@ -1,4 +1,6 @@
 // Barrel file for all services
+
+// Core services
 export 'database_service.dart';
 export 'auth_service.dart';
 export 'attendance_service.dart';
@@ -10,3 +12,7 @@ export 'license_service.dart';
 export 'settings_service.dart';
 export 'logging_service.dart';
 export 'branch_context_service.dart';
+
+// Financial Management services
+export 'financial_service.dart';
+export 'supplier_service.dart';

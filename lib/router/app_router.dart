@@ -21,6 +21,10 @@ import '../presentation/screens/payroll_screen.dart';
 import '../presentation/screens/settings_screen.dart';
 import '../presentation/screens/audit_log_screen.dart';
 import '../presentation/screens/branches_screen.dart';
+import '../presentation/screens/financial_shift_screen.dart';
+import '../presentation/screens/financial_dashboard_screen.dart';
+import '../presentation/screens/financial_reports_screen.dart';
+import '../presentation/screens/suppliers_screen.dart';
 import '../core/security/route_permissions.dart';
 
 /// Application router configuration
@@ -68,7 +72,9 @@ class AppRouter {
                           currentPath.startsWith('/settings') ||
                           currentPath.startsWith('/audit-log') ||
                           currentPath.startsWith('/branches') ||
-                          currentPath.startsWith('/attendance');
+                          currentPath.startsWith('/attendance') ||
+                          currentPath.startsWith('/financial') ||
+                          currentPath.startsWith('/suppliers');
       
       // Log navigation attempt
       final logger = LoggingService.instance;
@@ -269,6 +275,42 @@ class AppRouter {
               child: BranchesScreen(),
             ),
           ),
+          
+          // =========================================
+          // FINANCIAL MANAGEMENT ROUTES
+          // =========================================
+          
+          // Financial Dashboard
+          GoRoute(
+            path: '/financial-dashboard',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: FinancialDashboardScreen(),
+            ),
+          ),
+          
+          // Financial Shift Management
+          GoRoute(
+            path: '/financial-shift',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: FinancialShiftScreen(),
+            ),
+          ),
+          
+          // Financial Reports
+          GoRoute(
+            path: '/financial-reports',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: FinancialReportsScreen(),
+            ),
+          ),
+          
+          // Supplier Management
+          GoRoute(
+            path: '/suppliers',
+            pageBuilder: (context, state) => const NoTransitionPage(
+              child: SuppliersScreen(),
+            ),
+          ),
         ],
       ),
     ],
@@ -280,7 +322,7 @@ class AppRouter {
             const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
             Text(
-              'We couldn't find that page',
+              'We could not find that page',
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 8),

@@ -467,6 +467,161 @@ class DatabaseService {
     batch.execute('CREATE INDEX idx_qr_codes_expires ON qr_codes(expires_at)');
     batch.execute('CREATE INDEX idx_sync_logs_status ON sync_logs(status)');
     
+    // =========================================================================
+    // FINANCIAL MANAGEMENT TABLES (v3)
+    // =========================================================================
+    
+    // Financial Shifts - Tracks shift-level financial operations
+    batch.execute('''
+      CREATE TABLE financial_shifts (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL,
+        shift_id TEXT,
+        employee_id TEXT NOT NULL,
+        opened_at TEXT NOT NULL,
+        closed_at TEXT,
+        opening_cash REAL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'open',
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (shift_id) REFERENCES shifts(id) ON DELETE SET NULL,
+        FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+      )
+    ''');
+    
+    // Shift Sales - Records all sales during a shift
+    batch.execute('''
+      CREATE TABLE shift_sales (
+        id TEXT PRIMARY KEY,
+        financial_shift_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        payment_method TEXT NOT NULL DEFAULT 'cash',
+        description TEXT,
+        invoice_number TEXT,
+        customer_name TEXT,
+        recorded_by TEXT,
+        created_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL
+      )
+    ''');
+    
+    // Shift Expenses - Records all expenses during a shift
+    batch.execute('''
+      CREATE TABLE shift_expenses (
+        id TEXT PRIMARY KEY,
+        financial_shift_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        category TEXT NOT NULL DEFAULT 'misc',
+        description TEXT NOT NULL,
+        receipt_number TEXT,
+        recorded_by TEXT,
+        approved_by TEXT,
+        created_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL,
+        FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL
+      )
+    ''');
+    
+    // Shift Closures - Records the final state when closing a shift
+    batch.execute('''
+      CREATE TABLE shift_closures (
+        id TEXT PRIMARY KEY,
+        financial_shift_id TEXT NOT NULL UNIQUE,
+        branch_id TEXT NOT NULL,
+        total_sales REAL NOT NULL DEFAULT 0,
+        total_cash_sales REAL NOT NULL DEFAULT 0,
+        total_card_sales REAL NOT NULL DEFAULT 0,
+        total_wallet_sales REAL NOT NULL DEFAULT 0,
+        total_insurance_sales REAL NOT NULL DEFAULT 0,
+        total_credit_sales REAL NOT NULL DEFAULT 0,
+        total_expenses REAL NOT NULL DEFAULT 0,
+        expected_cash REAL NOT NULL DEFAULT 0,
+        actual_cash REAL NOT NULL,
+        difference REAL NOT NULL DEFAULT 0,
+        difference_reason TEXT,
+        closed_by TEXT NOT NULL,
+        verified_by TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (closed_by) REFERENCES employees(id) ON DELETE SET NULL,
+        FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL
+      )
+    ''');
+    
+    // Suppliers - Pharma companies / Vendors
+    batch.execute('''
+      CREATE TABLE suppliers (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        code TEXT,
+        phone TEXT,
+        email TEXT,
+        address TEXT,
+        contact_person TEXT,
+        tax_number TEXT,
+        payment_terms_days INTEGER DEFAULT 30,
+        credit_limit REAL DEFAULT 0,
+        notes TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        UNIQUE(branch_id, name)
+      )
+    ''');
+    
+    // Supplier Transactions - Purchases and Payments
+    batch.execute('''
+      CREATE TABLE supplier_transactions (
+        id TEXT PRIMARY KEY,
+        supplier_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL,
+        transaction_type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        invoice_number TEXT,
+        invoice_date TEXT,
+        due_date TEXT,
+        payment_method TEXT,
+        reference_number TEXT,
+        notes TEXT,
+        recorded_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
+      )
+    ''');
+    
+    // Financial indexes
+    batch.execute('CREATE INDEX idx_financial_shifts_branch ON financial_shifts(branch_id)');
+    batch.execute('CREATE INDEX idx_financial_shifts_date ON financial_shifts(opened_at)');
+    batch.execute('CREATE INDEX idx_financial_shifts_status ON financial_shifts(status)');
+    batch.execute('CREATE INDEX idx_shift_sales_shift ON shift_sales(financial_shift_id)');
+    batch.execute('CREATE INDEX idx_shift_sales_date ON shift_sales(created_at)');
+    batch.execute('CREATE INDEX idx_shift_expenses_shift ON shift_expenses(financial_shift_id)');
+    batch.execute('CREATE INDEX idx_suppliers_branch ON suppliers(branch_id)');
+    batch.execute('CREATE INDEX idx_supplier_transactions_supplier ON supplier_transactions(supplier_id)');
+    batch.execute('CREATE INDEX idx_supplier_transactions_date ON supplier_transactions(created_at)');
+    batch.execute('CREATE INDEX idx_supplier_transactions_type ON supplier_transactions(transaction_type)');
+    
     await batch.commit(noResult: true);
   }
   
@@ -489,17 +644,223 @@ class DatabaseService {
       );
     }
     
-    // Future migrations go here:
-    // if (oldVersion < 3) {
-    //   await _safeAddColumn(
-    //     db,
-    //     tableName: 'employees',
-    //     columnName: 'new_field',
-    //     columnType: 'TEXT',
-    //   );
-    // }
+    // Migration v2 -> v3: Add Financial Management tables
+    if (oldVersion < 3) {
+      await _migrateToV3(db);
+    }
     
     _logMigration('Migration completed successfully');
+  }
+  
+  /// Migration to v3: Add Financial Management System tables
+  Future<void> _migrateToV3(Database db) async {
+    _logMigration('Starting v3 migration: Financial Management System');
+    
+    // Create financial_shifts table if not exists
+    if (!await _tableExists(db, 'financial_shifts')) {
+      _logMigration('Creating financial_shifts table');
+      await db.execute('''
+        CREATE TABLE financial_shifts (
+          id TEXT PRIMARY KEY,
+          branch_id TEXT NOT NULL,
+          shift_id TEXT,
+          employee_id TEXT NOT NULL,
+          opened_at TEXT NOT NULL,
+          closed_at TEXT,
+          opening_cash REAL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'open',
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (shift_id) REFERENCES shifts(id) ON DELETE SET NULL,
+          FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+        )
+      ''');
+    }
+    
+    // Create shift_sales table if not exists
+    if (!await _tableExists(db, 'shift_sales')) {
+      _logMigration('Creating shift_sales table');
+      await db.execute('''
+        CREATE TABLE shift_sales (
+          id TEXT PRIMARY KEY,
+          financial_shift_id TEXT NOT NULL,
+          branch_id TEXT NOT NULL,
+          amount REAL NOT NULL,
+          payment_method TEXT NOT NULL DEFAULT 'cash',
+          description TEXT,
+          invoice_number TEXT,
+          customer_name TEXT,
+          recorded_by TEXT,
+          created_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL
+        )
+      ''');
+    }
+    
+    // Create shift_expenses table if not exists
+    if (!await _tableExists(db, 'shift_expenses')) {
+      _logMigration('Creating shift_expenses table');
+      await db.execute('''
+        CREATE TABLE shift_expenses (
+          id TEXT PRIMARY KEY,
+          financial_shift_id TEXT NOT NULL,
+          branch_id TEXT NOT NULL,
+          amount REAL NOT NULL,
+          category TEXT NOT NULL DEFAULT 'misc',
+          description TEXT NOT NULL,
+          receipt_number TEXT,
+          recorded_by TEXT,
+          approved_by TEXT,
+          created_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL,
+          FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+      ''');
+    }
+    
+    // Create shift_closures table if not exists
+    if (!await _tableExists(db, 'shift_closures')) {
+      _logMigration('Creating shift_closures table');
+      await db.execute('''
+        CREATE TABLE shift_closures (
+          id TEXT PRIMARY KEY,
+          financial_shift_id TEXT NOT NULL UNIQUE,
+          branch_id TEXT NOT NULL,
+          total_sales REAL NOT NULL DEFAULT 0,
+          total_cash_sales REAL NOT NULL DEFAULT 0,
+          total_card_sales REAL NOT NULL DEFAULT 0,
+          total_wallet_sales REAL NOT NULL DEFAULT 0,
+          total_insurance_sales REAL NOT NULL DEFAULT 0,
+          total_credit_sales REAL NOT NULL DEFAULT 0,
+          total_expenses REAL NOT NULL DEFAULT 0,
+          expected_cash REAL NOT NULL DEFAULT 0,
+          actual_cash REAL NOT NULL,
+          difference REAL NOT NULL DEFAULT 0,
+          difference_reason TEXT,
+          closed_by TEXT NOT NULL,
+          verified_by TEXT,
+          notes TEXT,
+          created_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (closed_by) REFERENCES employees(id) ON DELETE SET NULL,
+          FOREIGN KEY (verified_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+      ''');
+    }
+    
+    // Create suppliers table if not exists
+    if (!await _tableExists(db, 'suppliers')) {
+      _logMigration('Creating suppliers table');
+      await db.execute('''
+        CREATE TABLE suppliers (
+          id TEXT PRIMARY KEY,
+          branch_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          code TEXT,
+          phone TEXT,
+          email TEXT,
+          address TEXT,
+          contact_person TEXT,
+          tax_number TEXT,
+          payment_terms_days INTEGER DEFAULT 30,
+          credit_limit REAL DEFAULT 0,
+          notes TEXT,
+          is_active INTEGER DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          UNIQUE(branch_id, name)
+        )
+      ''');
+    }
+    
+    // Create supplier_transactions table if not exists
+    if (!await _tableExists(db, 'supplier_transactions')) {
+      _logMigration('Creating supplier_transactions table');
+      await db.execute('''
+        CREATE TABLE supplier_transactions (
+          id TEXT PRIMARY KEY,
+          supplier_id TEXT NOT NULL,
+          branch_id TEXT NOT NULL,
+          transaction_type TEXT NOT NULL,
+          amount REAL NOT NULL,
+          invoice_number TEXT,
+          invoice_date TEXT,
+          due_date TEXT,
+          payment_method TEXT,
+          reference_number TEXT,
+          notes TEXT,
+          recorded_by TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (recorded_by) REFERENCES users(id) ON DELETE SET NULL
+        )
+      ''');
+    }
+    
+    // Create indexes for financial tables
+    _logMigration('Creating indexes for financial tables');
+    await _safeCreateIndex(db, 'idx_financial_shifts_branch', 'financial_shifts', 'branch_id');
+    await _safeCreateIndex(db, 'idx_financial_shifts_date', 'financial_shifts', 'opened_at');
+    await _safeCreateIndex(db, 'idx_financial_shifts_status', 'financial_shifts', 'status');
+    await _safeCreateIndex(db, 'idx_shift_sales_shift', 'shift_sales', 'financial_shift_id');
+    await _safeCreateIndex(db, 'idx_shift_sales_date', 'shift_sales', 'created_at');
+    await _safeCreateIndex(db, 'idx_shift_expenses_shift', 'shift_expenses', 'financial_shift_id');
+    await _safeCreateIndex(db, 'idx_suppliers_branch', 'suppliers', 'branch_id');
+    await _safeCreateIndex(db, 'idx_supplier_transactions_supplier', 'supplier_transactions', 'supplier_id');
+    await _safeCreateIndex(db, 'idx_supplier_transactions_date', 'supplier_transactions', 'created_at');
+    await _safeCreateIndex(db, 'idx_supplier_transactions_type', 'supplier_transactions', 'transaction_type');
+    
+    _logMigration('v3 migration completed: Financial Management System tables created');
+  }
+  
+  /// Check if a table exists
+  Future<bool> _tableExists(Database db, String tableName) async {
+    final result = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      [tableName],
+    );
+    return result.isNotEmpty;
+  }
+  
+  /// Safely create an index if it doesn't exist
+  Future<void> _safeCreateIndex(
+    Database db,
+    String indexName,
+    String tableName,
+    String columnName,
+  ) async {
+    try {
+      // Check if index exists
+      final result = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+        [indexName],
+      );
+      
+      if (result.isEmpty) {
+        await db.execute('CREATE INDEX $indexName ON $tableName($columnName)');
+        _logMigration('Created index $indexName on $tableName($columnName)');
+      } else {
+        _logMigration('Index $indexName already exists - skipping');
+      }
+    } catch (e) {
+      _logMigration('ERROR creating index $indexName: $e');
+    }
   }
   
   /// Safely add a column if it doesn't exist
@@ -570,6 +931,14 @@ class DatabaseService {
   Future<void> clearAllData() async {
     final db = await database;
     final tables = [
+      // Financial tables first (foreign key order)
+      'shift_closures',
+      'shift_expenses',
+      'shift_sales',
+      'financial_shifts',
+      'supplier_transactions',
+      'suppliers',
+      // Original tables
       'sync_logs',
       'licenses',
       'settings',
@@ -590,7 +959,12 @@ class DatabaseService {
     ];
     
     for (final table in tables) {
-      await db.delete(table);
+      try {
+        await db.delete(table);
+      } catch (e) {
+        // Table might not exist in older databases
+        _logMigration('Warning: Could not clear table $table: $e');
+      }
     }
   }
   
