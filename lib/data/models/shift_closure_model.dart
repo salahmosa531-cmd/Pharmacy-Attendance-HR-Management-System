@@ -68,7 +68,7 @@ class ShiftClosure extends Equatable {
       totalCreditSales: (map['total_credit_sales'] as num?)?.toDouble() ?? 0,
       totalExpenses: (map['total_expenses'] as num?)?.toDouble() ?? 0,
       expectedCash: (map['expected_cash'] as num?)?.toDouble() ?? 0,
-      actualCash: (map['actual_cash'] as num).toDouble(),
+      actualCash: (map['actual_cash'] as num?)?.toDouble() ?? 0,
       difference: (map['difference'] as num?)?.toDouble() ?? 0,
       differenceReason: map['difference_reason'] as String?,
       closedBy: map['closed_by'] as String,
