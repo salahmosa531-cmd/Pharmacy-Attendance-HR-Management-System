@@ -4,6 +4,7 @@ import '../../data/models/supplier_transaction_model.dart';
 import '../../data/repositories/supplier_repository.dart';
 import '../../data/repositories/supplier_transaction_repository.dart';
 import 'logging_service.dart';
+import 'branch_context_service.dart';
 
 /// Supplier Service - Manages pharma company relationships and transactions
 /// 
@@ -21,6 +22,38 @@ class SupplierService {
   final _uuid = const Uuid();
   
   SupplierService._();
+  
+  // =========================================================================
+  // BRANCH CONTEXT VALIDATION (DEFENSIVE)
+  // =========================================================================
+  
+  /// Validates that branch context is available.
+  /// This is a LAST LINE OF DEFENSE - UI should prevent reaching here without branch.
+  void _requireBranchContext(String operation) {
+    final branchService = BranchContextService.instance;
+    if (!branchService.hasBranch || branchService.activeBranch == null) {
+      LoggingService.instance.error(
+        'SupplierService',
+        'DEFENSIVE GUARD TRIGGERED: $operation attempted without active branch',
+      );
+      throw SupplierException(
+        'No active branch context. Please select a branch before performing supplier operations.',
+        code: 'NO_BRANCH_CONTEXT',
+      );
+    }
+  }
+  
+  /// Validates that a branch ID matches the current active branch.
+  void _validateBranchId(String branchId, String operation) {
+    _requireBranchContext(operation);
+    final activeBranchId = BranchContextService.instance.activeBranchId;
+    if (branchId != activeBranchId) {
+      LoggingService.instance.warning(
+        'SupplierService',
+        '$operation: Branch ID mismatch - provided: $branchId, active: $activeBranchId',
+      );
+    }
+  }
 
   // =========================================================================
   // SUPPLIER OPERATIONS
@@ -40,6 +73,9 @@ class SupplierService {
     double creditLimit = 0,
     String? notes,
   }) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'createSupplier');
+    
     // Check for duplicate name
     if (await _supplierRepo.nameExists(branchId, name)) {
       throw SupplierException(
@@ -184,6 +220,9 @@ class SupplierService {
     String? notes,
     String? recordedBy,
   }) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'recordPurchase');
+    
     // Verify supplier exists
     final supplier = await _supplierRepo.getById(supplierId);
     if (supplier == null) {
@@ -232,6 +271,9 @@ class SupplierService {
     String? notes,
     String? recordedBy,
   }) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'recordPayment');
+    
     // Verify supplier exists
     final supplier = await _supplierRepo.getById(supplierId);
     if (supplier == null) {
@@ -340,6 +382,9 @@ class SupplierService {
 
   /// Get all suppliers with balances
   Future<List<Map<String, dynamic>>> getSuppliersWithBalances(String branchId) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'getSuppliersWithBalances');
+    
     return _supplierRepo.getSuppliersWithBalances(branchId);
   }
 

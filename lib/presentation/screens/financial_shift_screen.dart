@@ -9,6 +9,7 @@ import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
 import '../../data/repositories/employee_repository.dart';
+import '../widgets/no_branch_guard.dart';
 
 /// Financial Shift Management Screen
 /// 
@@ -685,6 +686,12 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
 
   @override
   Widget build(BuildContext context) {
+    // GUARD: Check branch context FIRST, before any service calls
+    // This is SECONDARY protection (after route-level guard)
+    if (!_branchContext.hasActiveBranch) {
+      return const NoBranchGuard(screenName: 'Financial Shift');
+    }
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('Financial Shift'),

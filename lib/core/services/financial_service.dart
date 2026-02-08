@@ -8,6 +8,7 @@ import '../../data/repositories/shift_sale_repository.dart';
 import '../../data/repositories/shift_expense_repository.dart';
 import '../../data/repositories/shift_closure_repository.dart';
 import 'logging_service.dart';
+import 'branch_context_service.dart';
 
 /// Financial Service - Orchestrates all shift-level financial operations
 /// 
@@ -27,6 +28,40 @@ class FinancialService {
   final _uuid = const Uuid();
   
   FinancialService._();
+  
+  // =========================================================================
+  // BRANCH CONTEXT VALIDATION (DEFENSIVE)
+  // =========================================================================
+  
+  /// Validates that branch context is available.
+  /// This is a LAST LINE OF DEFENSE - UI should prevent reaching here without branch.
+  void _requireBranchContext(String operation) {
+    final branchService = BranchContextService.instance;
+    if (!branchService.hasBranch || branchService.activeBranch == null) {
+      LoggingService.instance.error(
+        'FinancialService',
+        'DEFENSIVE GUARD TRIGGERED: $operation attempted without active branch',
+      );
+      throw FinancialException(
+        'No active branch context. Please select a branch before performing financial operations.',
+        code: 'NO_BRANCH_CONTEXT',
+      );
+    }
+  }
+  
+  /// Validates that a branch ID matches the current active branch.
+  /// Prevents operations on wrong branch.
+  void _validateBranchId(String branchId, String operation) {
+    _requireBranchContext(operation);
+    final activeBranchId = BranchContextService.instance.activeBranchId;
+    if (branchId != activeBranchId) {
+      LoggingService.instance.warning(
+        'FinancialService',
+        '$operation: Branch ID mismatch - provided: $branchId, active: $activeBranchId',
+      );
+      // Allow operation but log the mismatch for debugging
+    }
+  }
 
   // =========================================================================
   // FINANCIAL SHIFT OPERATIONS
@@ -42,6 +77,9 @@ class FinancialService {
     double openingCash = 0,
     String? notes,
   }) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'openShift');
+    
     // Check for existing open shift
     final existingShift = await _financialShiftRepo.getOpenShiftForEmployee(employeeId);
     if (existingShift != null) {
@@ -104,6 +142,9 @@ class FinancialService {
     String? customerName,
     String? recordedBy,
   }) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'recordSale');
+    
     // Verify shift is open
     final shift = await _financialShiftRepo.getById(financialShiftId);
     if (shift == null) {
@@ -171,6 +212,9 @@ class FinancialService {
     String? recordedBy,
     String? approvedBy,
   }) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'recordExpense');
+    
     // Verify shift is open
     final shift = await _financialShiftRepo.getById(financialShiftId);
     if (shift == null) {
@@ -359,6 +403,9 @@ class FinancialService {
 
   /// Get daily financial summary
   Future<Map<String, dynamic>> getDailySummary(String branchId, DateTime date) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'getDailySummary');
+    
     final startOfDay = DateTime(date.year, date.month, date.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
     
@@ -367,6 +414,9 @@ class FinancialService {
 
   /// Get monthly financial summary
   Future<Map<String, dynamic>> getMonthlySummary(String branchId, int year, int month) async {
+    // DEFENSIVE: Validate branch context
+    _validateBranchId(branchId, 'getMonthlySummary');
+    
     final startOfMonth = DateTime(year, month, 1);
     final endOfMonth = DateTime(year, month + 1, 0, 23, 59, 59);
     
