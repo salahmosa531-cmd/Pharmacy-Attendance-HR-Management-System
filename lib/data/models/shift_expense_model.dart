@@ -37,7 +37,7 @@ class ShiftExpense extends Equatable {
       id: map['id'] as String,
       financialShiftId: map['financial_shift_id'] as String,
       branchId: map['branch_id'] as String,
-      amount: (map['amount'] as num).toDouble(),
+      amount: (map['amount'] as num?)?.toDouble() ?? 0,
       category: ExpenseCategory.fromString(map['category'] as String? ?? 'misc'),
       description: map['description'] as String,
       receiptNumber: map['receipt_number'] as String?,

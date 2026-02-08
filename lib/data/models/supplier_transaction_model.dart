@@ -48,7 +48,7 @@ class SupplierTransaction extends Equatable {
       transactionType: SupplierTransactionType.fromString(
         map['transaction_type'] as String,
       ),
-      amount: (map['amount'] as num).toDouble(),
+      amount: (map['amount'] as num?)?.toDouble() ?? 0,
       invoiceNumber: map['invoice_number'] as String?,
       invoiceDate: map['invoice_date'] != null 
           ? DateTime.parse(map['invoice_date'] as String)
