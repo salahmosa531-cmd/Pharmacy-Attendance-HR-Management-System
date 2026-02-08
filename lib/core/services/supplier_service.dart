@@ -371,9 +371,9 @@ class SupplierService {
     
     return SupplierSummary(
       supplier: supplier,
-      totalPurchases: summary['total_purchases'] as double,
-      totalPayments: summary['total_payments'] as double,
-      balance: summary['balance'] as double,
+      totalPurchases: (summary['total_purchases'] as num).toDouble(),
+      totalPayments: (summary['total_payments'] as num).toDouble(),
+      balance: (summary['balance'] as num).toDouble(),
       purchaseCount: summary['purchase_count'] as int,
       paymentCount: summary['payment_count'] as int,
       overdueCount: summary['overdue_count'] as int,
@@ -421,7 +421,9 @@ class SupplierService {
     int limit = 10,
   }) async {
     final suppliers = await _supplierRepo.getSuppliersWithBalances(branchId);
-    suppliers.sort((a, b) => (b['balance'] as double).compareTo(a['balance'] as double));
+    suppliers.sort((a, b) => (b['balance'] as num).toDouble().compareTo(
+          (a['balance'] as num).toDouble(),
+        ));
     return suppliers.take(limit).toList();
   }
 
@@ -430,7 +432,7 @@ class SupplierService {
     final suppliers = await _supplierRepo.getSuppliersWithBalances(branchId);
     double total = 0;
     for (final s in suppliers) {
-      final balance = s['balance'] as double;
+      final balance = (s['balance'] as num).toDouble();
       if (balance > 0) {
         total += balance;
       }

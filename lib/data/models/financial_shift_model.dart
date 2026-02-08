@@ -45,7 +45,7 @@ class FinancialShift extends Equatable {
       closedAt: map['closed_at'] != null 
           ? DateTime.parse(map['closed_at'] as String)
           : null,
-      openingCash: (map['opening_cash'] as num?)?.toDouble() ?? 0,
+      openingCash: (map['opening_cash'] as num).toDouble(),
       status: FinancialShiftStatus.fromString(map['status'] as String? ?? 'open'),
       notes: map['notes'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
