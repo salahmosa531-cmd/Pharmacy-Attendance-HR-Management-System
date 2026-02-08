@@ -145,11 +145,16 @@ class BranchContextService {
         }
       }
       
-      // Do not auto-select a branch; require explicit admin action.
+      // NOTE: NO AUTO-SELECTION OF BRANCH
+      // Even if only one branch exists, we do NOT auto-select it.
+      // Branch selection must be EXPLICIT - user must go through /select-branch.
+      // This prevents silent fallback and ensures branch context is intentional.
+      // ARCHITECTURAL REQUIREMENT: Missing branch must be explicit.
       if (activeBranch == null && branches.isNotEmpty) {
         LoggingService.instance.info(
           'BranchContext',
-          'Branch selection required (no active branch set)',
+          'Branch(es) available but NO auto-selection. '
+          'User must explicitly select via /select-branch.',
         );
       }
       

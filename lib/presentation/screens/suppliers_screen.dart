@@ -6,6 +6,7 @@ import '../../core/services/branch_context_service.dart';
 import '../../core/services/auth_service.dart';
 import '../../data/models/supplier_model.dart';
 import '../../data/models/supplier_transaction_model.dart';
+import '../widgets/no_branch_guard.dart';
 
 /// Supplier Management Screen
 /// 
@@ -72,15 +73,27 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
   }
 
   Future<void> _addSupplier() async {
+    // PRE-CHECK: Validate branch context BEFORE showing dialog
+    // This prevents user frustration from filling a form that will fail
+    final branch = _branchContext.state.activeBranch;
+    if (branch == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a branch before adding suppliers'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return; // Do NOT show dialog, do NOT navigate away
+    }
+    
     final result = await _showSupplierDialog();
     if (result == null) return;
     
     setState(() => _isLoading = true);
     
     try {
-      final branch = _branchContext.state.activeBranch;
-      if (branch == null) throw SupplierException('No active branch');
-      
       await _supplierService.createSupplier(
         branchId: branch.id,
         name: result['name'] as String,
@@ -101,6 +114,8 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
         );
       }
     } catch (e) {
+      // STABILITY: Error is shown via snackbar, screen state remains stable
+      // Do NOT pop, do NOT clear list, do NOT navigate away
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error adding supplier: $e'), backgroundColor: Colors.red),
@@ -287,6 +302,21 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
   }
 
   Future<void> _recordPurchase(String supplierId) async {
+    // PRE-CHECK: Validate branch context BEFORE proceeding
+    final branch = _branchContext.state.activeBranch;
+    if (branch == null) {
+      Navigator.pop(context); // Close bottom sheet first
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a branch before recording purchases'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    
     Navigator.pop(context); // Close bottom sheet
     
     final result = await _showPurchaseDialog();
@@ -295,9 +325,6 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
     setState(() => _isLoading = true);
     
     try {
-      final branch = _branchContext.state.activeBranch;
-      if (branch == null) throw SupplierException('No active branch');
-      
       await _supplierService.recordPurchase(
         supplierId: supplierId,
         branchId: branch.id,
@@ -317,6 +344,7 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
         );
       }
     } catch (e) {
+      // STABILITY: Error shown via snackbar, screen remains stable
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error recording purchase: $e'), backgroundColor: Colors.red),
@@ -442,6 +470,21 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
   }
 
   Future<void> _recordPayment(String supplierId) async {
+    // PRE-CHECK: Validate branch context BEFORE proceeding
+    final branch = _branchContext.state.activeBranch;
+    if (branch == null) {
+      Navigator.pop(context); // Close bottom sheet first
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please select a branch before recording payments'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+    
     Navigator.pop(context); // Close bottom sheet
     
     final result = await _showPaymentDialog();
@@ -450,9 +493,6 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
     setState(() => _isLoading = true);
     
     try {
-      final branch = _branchContext.state.activeBranch;
-      if (branch == null) throw SupplierException('No active branch');
-      
       await _supplierService.recordPayment(
         supplierId: supplierId,
         branchId: branch.id,
@@ -471,6 +511,7 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
         );
       }
     } catch (e) {
+      // STABILITY: Error shown via snackbar, screen remains stable
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error recording payment: $e'), backgroundColor: Colors.red),
@@ -578,6 +619,12 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // GUARD: Check branch context FIRST, before any service calls
+    // This is SECONDARY protection (after route-level guard)
+    if (!_branchContext.hasActiveBranch) {
+      return const NoBranchGuard(screenName: 'Suppliers');
+    }
+    
     final totalOwed = _suppliersWithBalances.fold<double>(
       0,
       (sum, s) => sum + ((s['balance'] as double?) ?? 0).clamp(0, double.infinity),

@@ -6,6 +6,7 @@ import '../../core/services/supplier_service.dart';
 import '../../core/services/branch_context_service.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/repositories/shift_closure_repository.dart';
+import '../widgets/no_branch_guard.dart';
 
 /// Financial Dashboard Screen
 /// 
@@ -96,6 +97,12 @@ class _FinancialDashboardScreenState extends State<FinancialDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // GUARD: Check branch context FIRST, before any service calls
+    // This is SECONDARY protection (after route-level guard)
+    if (!_branchContext.hasActiveBranch) {
+      return const NoBranchGuard(screenName: 'Financial Dashboard');
+    }
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('Financial Dashboard'),

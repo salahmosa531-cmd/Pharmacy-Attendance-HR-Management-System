@@ -72,6 +72,10 @@ class AppRouter {
                           currentPath.startsWith('/financial') ||
                           currentPath.startsWith('/suppliers');
       
+      // Financial routes that REQUIRE active branch context
+      final isFinancialRoute = currentPath.startsWith('/financial') ||
+                               currentPath.startsWith('/suppliers');
+      
       // Log navigation attempt
       final logger = LoggingService.instance;
       
@@ -131,7 +135,14 @@ class AppRouter {
         }
       }
       
-      // 8. If logged in and trying to access login, redirect to dashboard
+      // 8. CRITICAL: Financial routes REQUIRE active branch context
+      // This is a PRIMARY guard - prevents entry without branch
+      if (isFinancialRoute && isLoggedIn && !hasBranch) {
+        logger.navigation(currentPath, '/select-branch', 'financial route requires active branch');
+        return '/select-branch';
+      }
+      
+      // 9. If logged in and trying to access login, redirect to dashboard
       if (isLoggedIn && isLogin) {
         final defaultRoute = authService.hasPermission('view_reports') ? '/dashboard' : '/kiosk';
         logger.navigation(currentPath, defaultRoute, 'already logged in');
