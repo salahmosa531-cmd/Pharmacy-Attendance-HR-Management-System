@@ -22,6 +22,11 @@ import '../presentation/screens/settings_screen.dart';
 import '../presentation/screens/audit_log_screen.dart';
 import '../presentation/screens/branches_screen.dart';
 import '../core/security/route_permissions.dart';
+import '../presentation/screens/financial_dashboard_screen.dart';
+import '../presentation/screens/financial_shift_screen.dart';
+import '../presentation/screens/financial_reports_screen.dart';
+import '../presentation/screens/suppliers_screen.dart';
+
 
 /// Application router configuration
 /// 
