@@ -329,7 +329,7 @@ class AppRouter {
             const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
             Text(
-              'We couldn't find that page',
+              'We couldnot find that page',
               style: Theme.of(context).textTheme.headlineMedium,
             ),
             const SizedBox(height: 8),
