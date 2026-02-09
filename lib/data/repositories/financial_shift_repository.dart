@@ -40,11 +40,14 @@ class FinancialShiftRepository extends BaseRepository<FinancialShift> {
     );
   }
 
-  /// Get currently open shift for an employee
-  Future<FinancialShift?> getOpenShiftForEmployee(String employeeId) async {
+  /// Get currently open shift for an employee in a specific branch
+  /// 
+  /// IMPORTANT: branchId is required to ensure we only return shifts
+  /// belonging to the current branch context, not shifts from other branches.
+  Future<FinancialShift?> getOpenShiftForEmployee(String branchId, String employeeId) async {
     final results = await getAll(
-      where: 'employee_id = ? AND status = ?',
-      whereArgs: [employeeId, 'open'],
+      where: 'branch_id = ? AND employee_id = ? AND status = ?',
+      whereArgs: [branchId, employeeId, 'open'],
       limit: 1,
     );
     return results.isNotEmpty ? results.first : null;
@@ -119,11 +122,13 @@ class FinancialShiftRepository extends BaseRepository<FinancialShift> {
     );
   }
 
-  /// Check if employee has an open shift
-  Future<bool> hasOpenShift(String employeeId) async {
+  /// Check if employee has an open shift in a specific branch
+  /// 
+  /// IMPORTANT: branchId is required to scope the check to the current branch.
+  Future<bool> hasOpenShift(String branchId, String employeeId) async {
     final count = await this.count(
-      where: 'employee_id = ? AND status = ?',
-      whereArgs: [employeeId, 'open'],
+      where: 'branch_id = ? AND employee_id = ? AND status = ?',
+      whereArgs: [branchId, employeeId, 'open'],
     );
     return count > 0;
   }

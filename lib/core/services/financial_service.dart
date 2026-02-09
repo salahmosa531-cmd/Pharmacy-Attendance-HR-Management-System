@@ -80,11 +80,12 @@ class FinancialService {
     // DEFENSIVE: Validate branch context
     _validateBranchId(branchId, 'openShift');
     
-    // Check for existing open shift
-    final existingShift = await _financialShiftRepo.getOpenShiftForEmployee(employeeId);
+    // Check for existing open shift IN THIS BRANCH
+    // Note: branchId is passed to scope the check to current branch only
+    final existingShift = await _financialShiftRepo.getOpenShiftForEmployee(branchId, employeeId);
     if (existingShift != null) {
       throw FinancialException(
-        'Employee already has an open shift. Please close it first.',
+        'Employee already has an open shift in this branch. Please close it first.',
         code: 'SHIFT_ALREADY_OPEN',
       );
     }
@@ -112,9 +113,11 @@ class FinancialService {
     return financialShift;
   }
 
-  /// Get currently open shift for employee
-  Future<FinancialShift?> getOpenShiftForEmployee(String employeeId) async {
-    return _financialShiftRepo.getOpenShiftForEmployee(employeeId);
+  /// Get currently open shift for employee in a specific branch
+  /// 
+  /// IMPORTANT: branchId is required to scope results to the current branch.
+  Future<FinancialShift?> getOpenShiftForEmployee(String branchId, String employeeId) async {
+    return _financialShiftRepo.getOpenShiftForEmployee(branchId, employeeId);
   }
 
   /// Get all open shifts for a branch

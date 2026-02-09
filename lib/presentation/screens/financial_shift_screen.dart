@@ -62,8 +62,12 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     
     try {
       final currentUser = _authService.currentUser;
-      if (currentUser?.employeeId != null) {
-        _currentShift = await _financialService.getOpenShiftForEmployee(currentUser!.employeeId!);
+      final branch = _branchContext.state.activeBranch;
+      
+      // IMPORTANT: Require both branch and employee to load shift
+      // This ensures we only load shifts for the current branch
+      if (branch != null && currentUser?.employeeId != null) {
+        _currentShift = await _financialService.getOpenShiftForEmployee(branch.id, currentUser!.employeeId!);
         
         if (_currentShift != null) {
           _shiftSummary = await _financialService.getShiftSummary(_currentShift!.id);
