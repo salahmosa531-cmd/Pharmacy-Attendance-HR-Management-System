@@ -2,11 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../core/services/supplier_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../core/services/auth_service.dart';
 import '../../data/models/supplier_model.dart';
 import '../../data/models/supplier_transaction_model.dart';
-import '../widgets/no_branch_guard.dart';
 
 /// Supplier Management Screen
 /// 
@@ -24,7 +22,6 @@ class SuppliersScreen extends StatefulWidget {
 
 class _SuppliersScreenState extends State<SuppliersScreen> {
   final _supplierService = SupplierService.instance;
-  final _branchContext = BranchContextService.instance;
   final _authService = AuthService.instance;
   
   bool _isLoading = true;
@@ -44,10 +41,8 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
     setState(() => _isLoading = true);
     
     try {
-      final branch = _branchContext.state.activeBranch;
-      if (branch != null) {
-        _suppliersWithBalances = await _supplierService.getSuppliersWithBalances(branch.id);
-      }
+      // Service now uses hardcoded branch_id = '1'
+      _suppliersWithBalances = await _supplierService.getSuppliersWithBalances();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -73,29 +68,14 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
   }
 
   Future<void> _addSupplier() async {
-    // PRE-CHECK: Validate branch context BEFORE showing dialog
-    // This prevents user frustration from filling a form that will fail
-    final branch = _branchContext.state.activeBranch;
-    if (branch == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please select a branch before adding suppliers'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-      return; // Do NOT show dialog, do NOT navigate away
-    }
-    
     final result = await _showSupplierDialog();
     if (result == null) return;
     
     setState(() => _isLoading = true);
     
     try {
+      // Service now uses hardcoded branch_id = '1'
       await _supplierService.createSupplier(
-        branchId: branch.id,
         name: result['name'] as String,
         code: result['code'] as String?,
         phone: result['phone'] as String?,
@@ -302,21 +282,6 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
   }
 
   Future<void> _recordPurchase(String supplierId) async {
-    // PRE-CHECK: Validate branch context BEFORE proceeding
-    final branch = _branchContext.state.activeBranch;
-    if (branch == null) {
-      Navigator.pop(context); // Close bottom sheet first
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please select a branch before recording purchases'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-      return;
-    }
-    
     Navigator.pop(context); // Close bottom sheet
     
     final result = await _showPurchaseDialog();
@@ -325,9 +290,9 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
     setState(() => _isLoading = true);
     
     try {
+      // Service now uses hardcoded branch_id = '1'
       await _supplierService.recordPurchase(
         supplierId: supplierId,
-        branchId: branch.id,
         amount: result['amount'] as double,
         invoiceNumber: result['invoiceNumber'] as String?,
         invoiceDate: result['invoiceDate'] as DateTime?,
@@ -470,21 +435,6 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
   }
 
   Future<void> _recordPayment(String supplierId) async {
-    // PRE-CHECK: Validate branch context BEFORE proceeding
-    final branch = _branchContext.state.activeBranch;
-    if (branch == null) {
-      Navigator.pop(context); // Close bottom sheet first
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please select a branch before recording payments'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-      return;
-    }
-    
     Navigator.pop(context); // Close bottom sheet
     
     final result = await _showPaymentDialog();
@@ -493,9 +443,9 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
     setState(() => _isLoading = true);
     
     try {
+      // Service now uses hardcoded branch_id = '1'
       await _supplierService.recordPayment(
         supplierId: supplierId,
-        branchId: branch.id,
         amount: result['amount'] as double,
         paymentMethod: result['paymentMethod'] as String?,
         referenceNumber: result['referenceNumber'] as String?,
@@ -619,12 +569,6 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // GUARD: Check branch context FIRST, before any service calls
-    // This is SECONDARY protection (after route-level guard)
-    if (!_branchContext.hasActiveBranch) {
-      return const NoBranchGuard(screenName: 'Suppliers');
-    }
-    
     final totalOwed = _suppliersWithBalances.fold<double>(
       0,
       (sum, s) => sum + ((s['balance'] as double?) ?? 0).clamp(0, double.infinity),

@@ -9,7 +9,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/employee_model.dart';
 import '../../data/repositories/employee_repository.dart';
@@ -25,7 +24,6 @@ class ReportsScreen extends StatefulWidget {
 
 class _ReportsScreenState extends State<ReportsScreen> {
   final AuthService _authService = AuthService.instance;
-  final BranchContextService _branchContextService = BranchContextService.instance;
   final EmployeeRepository _employeeRepository = EmployeeRepository.instance;
   final AttendanceRepository _attendanceRepository = AttendanceRepository.instance;
   
@@ -47,7 +45,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
   
   Future<void> _loadEmployees() async {
-    final branchId = _branchContextService.activeBranchId;
+    final branchId = '1';
     if (branchId == null) return;
     
     _employees = await _employeeRepository.getByBranch(branchId, activeOnly: false);
@@ -55,7 +53,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
   
   Future<void> _generateReport() async {
-    final branchId = _branchContextService.activeBranchId;
+    final branchId = '1';
     if (branchId == null) return;
     
     setState(() => _isLoading = true);
@@ -96,7 +94,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Future<void> _exportToPdf() async {
     final pdf = pw.Document();
     
-    final branchName = _branchContextService.activeBranch?.name ?? 'Unknown Branch';
+    final branchName = 'Main Branch';
     final reportTitle = _getReportTitle();
     
     pdf.addPage(

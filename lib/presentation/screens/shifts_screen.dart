@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../data/models/shift_model.dart';
 import '../../data/repositories/shift_repository.dart';
 
@@ -16,7 +15,6 @@ class ShiftsScreen extends StatefulWidget {
 class _ShiftsScreenState extends State<ShiftsScreen> {
   final ShiftRepository _shiftRepository = ShiftRepository.instance;
   final AuthService _authService = AuthService.instance;
-  final BranchContextService _branchContextService = BranchContextService.instance;
   
   List<Shift> _shifts = [];
   bool _isLoading = true;
@@ -28,7 +26,7 @@ class _ShiftsScreenState extends State<ShiftsScreen> {
   }
   
   Future<void> _loadShifts() async {
-    final branchId = _branchContextService.activeBranchId;
+    final branchId = '1';
     if (branchId == null) return;
     
     setState(() => _isLoading = true);

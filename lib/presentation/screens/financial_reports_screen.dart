@@ -5,10 +5,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../../core/services/financial_service.dart';
 import '../../core/services/supplier_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../data/repositories/shift_closure_repository.dart';
 import '../../data/models/shift_closure_model.dart';
-import '../widgets/no_branch_guard.dart';
 
 /// Financial Reports Screen
 /// 
@@ -27,7 +25,6 @@ class FinancialReportsScreen extends StatefulWidget {
 class _FinancialReportsScreenState extends State<FinancialReportsScreen> {
   final _financialService = FinancialService.instance;
   final _supplierService = SupplierService.instance;
-  final _branchContext = BranchContextService.instance;
   final _closureRepo = ShiftClosureRepository.instance;
   
   bool _isLoading = false;
@@ -45,6 +42,9 @@ class _FinancialReportsScreenState extends State<FinancialReportsScreen> {
   final _dateFormat = DateFormat('dd MMM yyyy');
   final _timeFormat = DateFormat('hh:mm a');
 
+  // Hardcoded branch name for single-branch architecture
+  static const String _branchName = 'Main Branch';
+
   @override
   void initState() {
     super.initState();
@@ -55,30 +55,28 @@ class _FinancialReportsScreenState extends State<FinancialReportsScreen> {
     setState(() => _isLoading = true);
     
     try {
-      final branch = _branchContext.state.activeBranch;
-      if (branch == null) return;
-      
+      // All repository calls now use hardcoded branch_id = '1'
       switch (_selectedReport) {
         case 'daily':
           final startOfDay = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
           final endOfDay = startOfDay.add(const Duration(days: 1));
-          _closures = await _closureRepo.getByDateRange(branch.id, startOfDay, endOfDay);
-          _periodSummary = await _closureRepo.getPeriodSummary(branch.id, startOfDay, endOfDay);
+          _closures = await _closureRepo.getByDateRange('1', startOfDay, endOfDay);
+          _periodSummary = await _closureRepo.getPeriodSummary('1', startOfDay, endOfDay);
           break;
           
         case 'monthly':
           final startOfMonth = DateTime(_selectedYear, _selectedMonth, 1);
           final endOfMonth = DateTime(_selectedYear, _selectedMonth + 1, 0, 23, 59, 59);
-          _closures = await _closureRepo.getByDateRange(branch.id, startOfMonth, endOfMonth);
-          _periodSummary = await _closureRepo.getPeriodSummary(branch.id, startOfMonth, endOfMonth);
+          _closures = await _closureRepo.getByDateRange('1', startOfMonth, endOfMonth);
+          _periodSummary = await _closureRepo.getPeriodSummary('1', startOfMonth, endOfMonth);
           break;
           
         case 'suppliers':
-          _supplierBalances = await _supplierService.getSuppliersWithBalances(branch.id);
+          _supplierBalances = await _supplierService.getSuppliersWithBalances();
           break;
           
         case 'discrepancies':
-          _closures = await _closureRepo.getClosuresWithDiscrepancies(branch.id, limit: 100);
+          _closures = await _closureRepo.getClosuresWithDiscrepancies('1', limit: 100);
           break;
       }
     } catch (e) {
@@ -95,15 +93,12 @@ class _FinancialReportsScreenState extends State<FinancialReportsScreen> {
   }
 
   Future<void> _exportToPdf() async {
-    final branch = _branchContext.state.activeBranch;
-    if (branch == null) return;
-    
     final pdf = pw.Document();
     
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        build: (context) => _buildPdfContent(branch.name),
+        build: (context) => _buildPdfContent(_branchName),
       ),
     );
     
@@ -262,12 +257,6 @@ class _FinancialReportsScreenState extends State<FinancialReportsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // GUARD: Check branch context FIRST, before any service calls
-    // This is SECONDARY protection (after route-level guard)
-    if (!_branchContext.hasActiveBranch) {
-      return const NoBranchGuard(screenName: 'Financial Reports');
-    }
-    
     return Scaffold(
       appBar: AppBar(
         title: const Text('Financial Reports'),

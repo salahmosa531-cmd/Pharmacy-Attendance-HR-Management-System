@@ -19,7 +19,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final AttendanceService _attendanceService = AttendanceService.instance;
   final EmployeeRepository _employeeRepository = EmployeeRepository.instance;
   final AuthService _authService = AuthService.instance;
-  final BranchContextService _branchContextService = BranchContextService.instance;
   
   bool _isLoading = true;
   Map<String, dynamic> _summary = {};
@@ -40,7 +39,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() => _isLoading = true);
     
     try {
-      final branchId = _branchContextService.activeBranchId;
+      final branchId = '1';
       if (branchId == null) return;
       
       final results = await Future.wait([

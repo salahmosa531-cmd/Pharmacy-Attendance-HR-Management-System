@@ -10,17 +10,20 @@ import '../../data/repositories/repositories.dart';
 import '../../data/models/audit_log_model.dart';
 import 'database_service.dart';
 import 'auth_service.dart';
-import 'branch_context_service.dart';
 
 /// Service for cloud synchronization and backup
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: All operations use hardcoded branch_id = '1'
 class SyncService {
   static SyncService? _instance;
   
   final DatabaseService _databaseService = DatabaseService.instance;
-  final BranchContextService _branchContextService = BranchContextService.instance;
   final AuthService _authService = AuthService.instance;
   final AuditRepository _auditRepository = AuditRepository.instance;
   final Uuid _uuid = const Uuid();
+  
+  // SINGLE-BRANCH: Hardcoded branch ID
+  static const String _branchId = '1';
   
   SyncStatus _status = SyncStatus.idle;
   DateTime? _lastSyncTime;
@@ -109,25 +112,16 @@ class SyncService {
     _status = SyncStatus.syncing;
     
     try {
-      final branchId = _branchContextService.activeBranchId;
-      if (branchId == null) {
-        _status = SyncStatus.error;
-        return SyncResult(
-          success: false,
-          message: 'No branch selected',
-        );
-      }
-      
       // Get pending changes
-      final pendingChanges = await _getPendingChanges(branchId);
+      final pendingChanges = await _getPendingChanges(_branchId);
       
       // Upload changes
       if (pendingChanges.isNotEmpty) {
-        await _uploadChanges(branchId, pendingChanges);
+        await _uploadChanges(_branchId, pendingChanges);
       }
       
       // Download remote changes
-      final remoteChanges = await _downloadChanges(branchId);
+      final remoteChanges = await _downloadChanges(_branchId);
       
       // Apply remote changes
       if (remoteChanges.isNotEmpty) {
@@ -140,11 +134,11 @@ class SyncService {
       // Log sync
       await _auditRepository.log(
         id: _uuid.v4(),
-        branchId: branchId,
+        branchId: _branchId,
         userId: _authService.currentUser?.id,
         action: AuditAction.sync,
         entityType: AuditEntityType.branch,
-        entityId: branchId,
+        entityId: _branchId,
         newValues: {
           'uploaded': pendingChanges.length,
           'downloaded': remoteChanges.length,
@@ -266,7 +260,7 @@ class SyncService {
     if (changes.isEmpty) return;
 
     await db.transaction((txn) async {
-      await _ensureActiveBranchExists(txn, changes);
+      await _ensureDefaultBranchExists(txn);
 
       final orderedChanges = _orderChangesByDependency(changes);
 
@@ -343,27 +337,12 @@ class SyncService {
     return ordered;
   }
 
-  Future<void> _ensureActiveBranchExists(
-    Transaction txn,
-    List<Map<String, dynamic>> changes,
-  ) async {
-    final currentBranch = _branchContextService.activeBranch;
-    if (currentBranch == null) return;
-
-    final hasBranchChange = changes.any(
-      (change) =>
-          change['table'] == 'branches' &&
-          (change['action'] == 'create' || change['action'] == 'update') &&
-          (change['data'] as Map?)?['id'] == currentBranch.id,
-    );
-
-    if (hasBranchChange) return;
-
+  Future<void> _ensureDefaultBranchExists(Transaction txn) async {
     final existingBranch = await txn.query(
       'branches',
       columns: ['id'],
       where: 'id = ?',
-      whereArgs: [currentBranch.id],
+      whereArgs: [_branchId],
       limit: 1,
     );
 
@@ -372,20 +351,12 @@ class SyncService {
     await txn.insert(
       'branches',
       {
-        'id': currentBranch.id,
-        'name': currentBranch.name,
-        'address': currentBranch.address,
-        'phone': currentBranch.phone,
-        'email': currentBranch.email,
-        'is_main_branch': currentBranch.isMainBranch ? 1 : 0,
-        'owner_id': currentBranch.ownerId,
-        'device_id': currentBranch.deviceId,
-        'location_lat': currentBranch.locationLat,
-        'location_lng': currentBranch.locationLng,
-        'location_radius': currentBranch.locationRadius,
-        'is_active': currentBranch.isActive ? 1 : 0,
-        'created_at': currentBranch.createdAt.toIso8601String(),
-        'updated_at': currentBranch.updatedAt.toIso8601String(),
+        'id': _branchId,
+        'name': 'Main Branch',
+        'is_main_branch': 1,
+        'is_active': 1,
+        'created_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
         'synced_at': DateTime.now().toIso8601String(),
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
@@ -465,7 +436,6 @@ class SyncService {
   /// Export database to JSON
   Future<String> exportToJson() async {
     final db = await _databaseService.database;
-    final branchId = _branchContextService.activeBranchId;
     
     final tables = [
       'branches',
@@ -480,7 +450,7 @@ class SyncService {
     final exportData = <String, dynamic>{
       'version': AppConstants.appVersion,
       'exported_at': DateTime.now().toIso8601String(),
-      'branch_id': branchId,
+      'branch_id': _branchId,
     };
     
     for (final table in tables) {

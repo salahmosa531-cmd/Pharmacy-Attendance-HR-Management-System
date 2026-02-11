@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/services/auth_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/app_localizations.dart';
 import '../../core/constants/app_constants.dart';
@@ -22,7 +21,6 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   bool _isRailExtended = true;
-  final BranchContextService _branchContextService = BranchContextService.instance;
   
   int _getSelectedIndex(BuildContext context) {
     final location = GoRouterState.of(context).matchedLocation;
@@ -189,7 +187,7 @@ class _MainShellState extends State<MainShell> {
                                 maxLines: 1,
                               ),
                               Text(
-                                _branchContextService.activeBranch?.name ?? 'Attendance',
+                                'Pharmacy Attendance',
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: AppTheme.textSecondary,

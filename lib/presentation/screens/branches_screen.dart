@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../data/models/branch_model.dart';
 import '../../data/repositories/branch_repository.dart';
 import '../../data/repositories/employee_repository.dart';
@@ -18,7 +17,6 @@ class BranchesScreen extends StatefulWidget {
 
 class _BranchesScreenState extends State<BranchesScreen> {
   final AuthService _authService = AuthService.instance;
-  final BranchContextService _branchContextService = BranchContextService.instance;
   final BranchRepository _branchRepository = BranchRepository.instance;
   final EmployeeRepository _employeeRepository = EmployeeRepository.instance;
   final ShiftRepository _shiftRepository = ShiftRepository.instance;
@@ -173,21 +171,16 @@ class _BranchesScreenState extends State<BranchesScreen> {
                     );
                     await _branchRepository.update(updatedBranch, updatedBranch.id);
                   } else {
-                    // Use BranchContextService to create branch with defaults
-                    // This creates default shifts automatically
-                    await _branchContextService.createBranchWithDefaults(
-                      name: nameController.text.trim(),
-                      address: addressController.text.trim().isNotEmpty
-                          ? addressController.text.trim()
-                          : null,
-                      phone: phoneController.text.trim().isNotEmpty
-                          ? phoneController.text.trim()
-                          : null,
-                      email: emailController.text.trim().isNotEmpty
-                          ? emailController.text.trim()
-                          : null,
-                      setAsActive: false, // Don't change active branch automatically
+                    // SINGLE-BRANCH: Creating additional branches is disabled
+                    // In single-branch mode, only the default branch (id=1) is used
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Creating additional branches is disabled in single-branch mode'),
+                        backgroundColor: AppTheme.warningColor,
+                      ),
                     );
+                    Navigator.pop(context);
+                    return;
                   }
                   
                   if (context.mounted) Navigator.pop(context);

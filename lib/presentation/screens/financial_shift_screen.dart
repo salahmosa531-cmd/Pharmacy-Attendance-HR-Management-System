@@ -2,14 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../core/services/financial_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
 import '../../data/repositories/employee_repository.dart';
-import '../widgets/no_branch_guard.dart';
 
 /// Financial Shift Management Screen
 /// 
@@ -27,7 +25,6 @@ class FinancialShiftScreen extends StatefulWidget {
 
 class _FinancialShiftScreenState extends State<FinancialShiftScreen> with SingleTickerProviderStateMixin {
   final _financialService = FinancialService.instance;
-  final _branchContext = BranchContextService.instance;
   final _authService = AuthService.instance;
   final _employeeRepo = EmployeeRepository.instance;
   
@@ -62,12 +59,10 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     
     try {
       final currentUser = _authService.currentUser;
-      final branch = _branchContext.state.activeBranch;
       
-      // IMPORTANT: Require both branch and employee to load shift
-      // This ensures we only load shifts for the current branch
-      if (branch != null && currentUser?.employeeId != null) {
-        _currentShift = await _financialService.getOpenShiftForEmployee(branch.id, currentUser!.employeeId!);
+      // SINGLE-BRANCH: Load shift for current employee
+      if (currentUser?.employeeId != null) {
+        _currentShift = await _financialService.getOpenShiftForEmployee(currentUser!.employeeId!);
         
         if (_currentShift != null) {
           _shiftSummary = await _financialService.getShiftSummary(_currentShift!.id);
@@ -78,6 +73,12 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
           final employee = await _employeeRepo.getById(_currentShift!.employeeId);
           _employeeName = employee?.fullName;
         }
+      }
+    } on FinancialException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: ${e.message}'), backgroundColor: Colors.red),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -99,15 +100,14 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     setState(() => _isLoading = true);
     
     try {
-      final branch = _branchContext.state.activeBranch;
       final currentUser = _authService.currentUser;
       
-      if (branch == null || currentUser?.employeeId == null) {
-        throw FinancialException('No active branch or employee', code: 'NO_CONTEXT');
+      if (currentUser?.employeeId == null) {
+        throw FinancialException('No employee context', code: 'NO_CONTEXT');
       }
       
+      // SINGLE-BRANCH: openShift handles branch internally
       _currentShift = await _financialService.openShift(
-        branchId: branch.id,
         employeeId: currentUser!.employeeId!,
         openingCash: openingCash,
       );
@@ -190,7 +190,6 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     try {
       await _financialService.recordSale(
         financialShiftId: _currentShift!.id,
-        branchId: _currentShift!.branchId,
         amount: result['amount'] as double,
         paymentMethod: result['method'] as PaymentMethod,
         description: result['description'] as String?,
@@ -320,7 +319,6 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     try {
       await _financialService.recordExpense(
         financialShiftId: _currentShift!.id,
-        branchId: _currentShift!.branchId,
         amount: result['amount'] as double,
         category: result['category'] as ExpenseCategory,
         description: result['description'] as String,
@@ -690,12 +688,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
 
   @override
   Widget build(BuildContext context) {
-    // GUARD: Check branch context FIRST, before any service calls
-    // This is SECONDARY protection (after route-level guard)
-    if (!_branchContext.hasActiveBranch) {
-      return const NoBranchGuard(screenName: 'Financial Shift');
-    }
-    
+    // SINGLE-BRANCH: No branch guard needed
     return Scaffold(
       appBar: AppBar(
         title: const Text('Financial Shift'),

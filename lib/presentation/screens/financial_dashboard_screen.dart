@@ -3,10 +3,8 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../../core/services/financial_service.dart';
 import '../../core/services/supplier_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/repositories/shift_closure_repository.dart';
-import '../widgets/no_branch_guard.dart';
 
 /// Financial Dashboard Screen
 /// 
@@ -26,7 +24,6 @@ class FinancialDashboardScreen extends StatefulWidget {
 class _FinancialDashboardScreenState extends State<FinancialDashboardScreen> {
   final _financialService = FinancialService.instance;
   final _supplierService = SupplierService.instance;
-  final _branchContext = BranchContextService.instance;
   final _closureRepo = ShiftClosureRepository.instance;
   
   bool _isLoading = true;
@@ -54,22 +51,19 @@ class _FinancialDashboardScreenState extends State<FinancialDashboardScreen> {
     setState(() => _isLoading = true);
     
     try {
-      final branch = _branchContext.state.activeBranch;
-      if (branch == null) return;
-      
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final weekAgo = today.subtract(const Duration(days: 7));
       
-      // Load all data in parallel
+      // Load all data in parallel - services now use hardcoded branch_id = '1'
       final results = await Future.wait([
-        _financialService.getDailySummary(branch.id, today),
-        _financialService.getMonthlySummary(branch.id, now.year, now.month),
-        _financialService.getOpenShiftsForBranch(branch.id),
-        _supplierService.getTotalOwed(branch.id),
-        _supplierService.getTopSuppliersByBalance(branch.id, limit: 5),
-        _closureRepo.getDailyTotals(branch.id, weekAgo, today),
-        _financialService.getDiscrepancies(branch.id, limit: 5),
+        _financialService.getDailySummary(today),
+        _financialService.getMonthlySummary(now.year, now.month),
+        _financialService.getOpenShiftsForBranch(),
+        _supplierService.getTotalOwed(),
+        _supplierService.getTopSuppliersByBalance(limit: 5),
+        _closureRepo.getDailyTotals('1', weekAgo, today),
+        _financialService.getDiscrepancies(limit: 5),
       ]);
       
       _todaySummary = results[0] as Map<String, dynamic>;
@@ -97,12 +91,6 @@ class _FinancialDashboardScreenState extends State<FinancialDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // GUARD: Check branch context FIRST, before any service calls
-    // This is SECONDARY protection (after route-level guard)
-    if (!_branchContext.hasActiveBranch) {
-      return const NoBranchGuard(screenName: 'Financial Dashboard');
-    }
-    
     return Scaffold(
       appBar: AppBar(
         title: const Text('Financial Dashboard'),

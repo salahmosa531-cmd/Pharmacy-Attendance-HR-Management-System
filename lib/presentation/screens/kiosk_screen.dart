@@ -32,7 +32,6 @@ class KioskScreen extends StatefulWidget {
 class _KioskScreenState extends State<KioskScreen> {
   final AttendanceService _attendanceService = AttendanceService.instance;
   final SettingsService _settingsService = SettingsService.instance;
-  final BranchContextService _branchService = BranchContextService.instance;
   final QrService _qrService = QrService.instance;
   final EmployeeRepository _employeeRepository = EmployeeRepository.instance;
   final AttendanceRepository _attendanceRepository = AttendanceRepository.instance;
@@ -60,11 +59,8 @@ class _KioskScreenState extends State<KioskScreen> {
   StreamSubscription<SettingsState>? _settingsSubscription;
   SettingsState _settings = const SettingsState();
   
-  // Branch context subscription
-  StreamSubscription<BranchContextState>? _branchSubscription;
+  // Single-branch mode: no branch context subscription needed
   bool _isBranchInitialized = false;
-  String? _initializedBranchId;
-  bool _hasLoggedNoBranch = false;
   
   // Recent attendance records
   List<Map<String, dynamic>> _recentRecords = [];
@@ -84,37 +80,14 @@ class _KioskScreenState extends State<KioskScreen> {
   }
   
   Future<void> _initializeKiosk() async {
-    _branchSubscription = _branchService.stateStream.listen((state) {
-      if (!mounted) return;
-
-      // If branch was cleared, redirect to branch selection
-      if (!state.hasBranch && state.availableBranches.isNotEmpty) {
-        context.go('/select-branch');
-        return;
-      }
-
-      // Initialize kiosk context once branch becomes available
-      if (state.hasBranch && _branchService.activeBranchId != _initializedBranchId) {
-        _initializeForActiveBranch(force: true);
-        _hasLoggedNoBranch = false;
-      }
-
-      setState(() {});
-    });
-
-    if (_branchService.hasBranch) {
-      await _initializeForActiveBranch();
-    } else {
-      _hasLoggedNoBranch = true;
-      LoggingService.instance.warning('Kiosk', 'No branch set, waiting for selection');
-    }
+    // SINGLE-BRANCH: Initialize directly, no branch selection needed
+    await _initializeForActiveBranch();
   }
 
   Future<void> _initializeForActiveBranch({bool force = false}) async {
     if (_isBranchInitialized && !force) return;
 
     _isBranchInitialized = true;
-    _initializedBranchId = _branchService.activeBranchId;
 
     // Load settings
     await _settingsService.initialize();
@@ -160,7 +133,6 @@ class _KioskScreenState extends State<KioskScreen> {
     _clockTimer?.cancel();
     _logoTapTimer?.cancel();
     _settingsSubscription?.cancel();
-    _branchSubscription?.cancel();
     super.dispose();
   }
   
@@ -225,8 +197,8 @@ class _KioskScreenState extends State<KioskScreen> {
     if (!_settings.showLastAttendance) return;
     
     try {
-      // Use BranchContextService for branch ID (single source of truth)
-      final branchId = _branchService.activeBranchId;
+      // SINGLE-BRANCH: Use hardcoded branch ID
+      final branchId = '1';
       if (branchId == null) return;
       
       final records = await _attendanceRepository.getByBranchDate(branchId, DateTime.now());
@@ -431,18 +403,7 @@ class _KioskScreenState extends State<KioskScreen> {
   
   @override
   Widget build(BuildContext context) {
-    // Check if we have a branch context - this is CRITICAL
-    final activeBranch = _branchService.activeBranch;
-    if (activeBranch == null) {
-      if (!_hasLoggedNoBranch) {
-        _hasLoggedNoBranch = true;
-        LoggingService.instance.warning(
-          'Kiosk',
-          'Blocked attendance: no active branch configured',
-        );
-      }
-      return _buildNoBranchScreen();
-    }
+    // SINGLE-BRANCH: Branch is always configured
     
     // FIXED: Use Focus widget with proper onKeyEvent handler for reliable keyboard shortcuts
     return Focus(
@@ -591,7 +552,8 @@ class _KioskScreenState extends State<KioskScreen> {
   }
   
   Widget _buildHeader() {
-    final activeBranch = _branchService.activeBranch;
+    // SINGLE-BRANCH: Use hardcoded branch name
+    const branchName = 'Pharmacy Attendance';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
@@ -630,7 +592,7 @@ class _KioskScreenState extends State<KioskScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    activeBranch?.name ?? 'Pharmacy Attendance',
+                    branchName,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,

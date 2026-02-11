@@ -2,9 +2,14 @@ import '../models/supplier_model.dart';
 import 'base_repository.dart';
 
 /// Repository for supplier operations
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: All queries use hardcoded branch_id = '1'
 class SupplierRepository extends BaseRepository<Supplier> {
   static final SupplierRepository _instance = SupplierRepository._();
   static SupplierRepository get instance => _instance;
+  
+  // SINGLE-BRANCH: Hardcoded branch ID
+  static const String _defaultBranchId = '1';
   
   SupplierRepository._();
 
@@ -15,15 +20,17 @@ class SupplierRepository extends BaseRepository<Supplier> {
   Supplier fromMap(Map<String, dynamic> map) => Supplier.fromMap(map);
 
   @override
-  Map<String, dynamic> toMap(Supplier item) => item.toMap();
+  Map<String, dynamic> toMap(Supplier item) {
+    final map = item.toMap();
+    // SINGLE-BRANCH: Ensure branch_id is always '1'
+    map['branch_id'] = _defaultBranchId;
+    return map;
+  }
 
-  /// Get all suppliers for a branch
-  Future<List<Supplier>> getByBranch(
-    String branchId, {
-    bool activeOnly = true,
-  }) async {
+  /// Get all suppliers
+  Future<List<Supplier>> getByBranch({bool activeOnly = true}) async {
     String where = 'branch_id = ?';
-    List<dynamic> whereArgs = [branchId];
+    List<dynamic> whereArgs = [_defaultBranchId];
     
     if (activeOnly) {
       where += ' AND is_active = 1';
@@ -37,43 +44,39 @@ class SupplierRepository extends BaseRepository<Supplier> {
   }
 
   /// Get supplier by name
-  Future<Supplier?> getByName(String branchId, String name) async {
+  Future<Supplier?> getByName(String name) async {
     final results = await getAll(
       where: 'branch_id = ? AND LOWER(name) = ?',
-      whereArgs: [branchId, name.toLowerCase()],
+      whereArgs: [_defaultBranchId, name.toLowerCase()],
       limit: 1,
     );
     return results.isNotEmpty ? results.first : null;
   }
 
   /// Get supplier by code
-  Future<Supplier?> getByCode(String branchId, String code) async {
+  Future<Supplier?> getByCode(String code) async {
     final results = await getAll(
       where: 'branch_id = ? AND code = ?',
-      whereArgs: [branchId, code],
+      whereArgs: [_defaultBranchId, code],
       limit: 1,
     );
     return results.isNotEmpty ? results.first : null;
   }
 
   /// Search suppliers by name or code
-  Future<List<Supplier>> search(String branchId, String query) async {
+  Future<List<Supplier>> search(String query) async {
     final searchQuery = '%${query.toLowerCase()}%';
     return getAll(
       where: 'branch_id = ? AND (LOWER(name) LIKE ? OR LOWER(code) LIKE ?)',
-      whereArgs: [branchId, searchQuery, searchQuery],
+      whereArgs: [_defaultBranchId, searchQuery, searchQuery],
       orderBy: 'name ASC',
     );
   }
 
   /// Check if supplier name exists
-  Future<bool> nameExists(
-    String branchId,
-    String name, {
-    String? excludeId,
-  }) async {
+  Future<bool> nameExists(String name, {String? excludeId}) async {
     String where = 'branch_id = ? AND LOWER(name) = ?';
-    List<dynamic> whereArgs = [branchId, name.toLowerCase()];
+    List<dynamic> whereArgs = [_defaultBranchId, name.toLowerCase()];
     
     if (excludeId != null) {
       where += ' AND id != ?';
@@ -98,18 +101,16 @@ class SupplierRepository extends BaseRepository<Supplier> {
     );
   }
 
-  /// Get active supplier count for a branch
-  Future<int> getActiveCount(String branchId) async {
+  /// Get active supplier count
+  Future<int> getActiveCount() async {
     return count(
       where: 'branch_id = ? AND is_active = 1',
-      whereArgs: [branchId],
+      whereArgs: [_defaultBranchId],
     );
   }
 
   /// Get suppliers with overdue invoices (using transactions)
-  Future<List<Map<String, dynamic>>> getSuppliersWithOverdueInvoices(
-    String branchId,
-  ) async {
+  Future<List<Map<String, dynamic>>> getSuppliersWithOverdueInvoices() async {
     final db = await database;
     return await db.rawQuery('''
       SELECT s.*, 
@@ -122,13 +123,11 @@ class SupplierRepository extends BaseRepository<Supplier> {
       GROUP BY s.id
       HAVING overdue_count > 0
       ORDER BY overdue_count DESC
-    ''', [branchId]);
+    ''', [_defaultBranchId]);
   }
 
   /// Get suppliers with balances
-  Future<List<Map<String, dynamic>>> getSuppliersWithBalances(
-    String branchId,
-  ) async {
+  Future<List<Map<String, dynamic>>> getSuppliersWithBalances() async {
     final db = await database;
     return await db.rawQuery('''
       SELECT s.*, 
@@ -141,6 +140,6 @@ class SupplierRepository extends BaseRepository<Supplier> {
       WHERE s.branch_id = ? AND s.is_active = 1
       GROUP BY s.id
       ORDER BY balance DESC
-    ''', [branchId]);
+    ''', [_defaultBranchId]);
   }
 }
