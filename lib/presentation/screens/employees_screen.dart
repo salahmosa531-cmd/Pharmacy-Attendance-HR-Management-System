@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/auth_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/employee_model.dart';
 import '../../data/repositories/employee_repository.dart';
@@ -18,7 +17,6 @@ class EmployeesScreen extends StatefulWidget {
 class _EmployeesScreenState extends State<EmployeesScreen> {
   final EmployeeRepository _employeeRepository = EmployeeRepository.instance;
   final AuthService _authService = AuthService.instance;
-  final BranchContextService _branchContextService = BranchContextService.instance;
   final TextEditingController _searchController = TextEditingController();
   
   List<Employee> _employees = [];
@@ -39,7 +37,7 @@ class _EmployeesScreenState extends State<EmployeesScreen> {
   }
   
   Future<void> _loadEmployees() async {
-    final branchId = _branchContextService.activeBranchId;
+    final branchId = '1';
     if (branchId == null) return;
     
     setState(() => _isLoading = true);

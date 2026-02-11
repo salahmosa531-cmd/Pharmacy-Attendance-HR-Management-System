@@ -8,9 +8,11 @@ import '../../data/repositories/shift_sale_repository.dart';
 import '../../data/repositories/shift_expense_repository.dart';
 import '../../data/repositories/shift_closure_repository.dart';
 import 'logging_service.dart';
-import 'branch_context_service.dart';
 
 /// Financial Service - Orchestrates all shift-level financial operations
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: All operations use hardcoded branch_id = '1'
+/// Branch context validation has been removed for offline-first single-branch mode.
 /// 
 /// Handles:
 /// - Opening/closing financial shifts
@@ -28,40 +30,6 @@ class FinancialService {
   final _uuid = const Uuid();
   
   FinancialService._();
-  
-  // =========================================================================
-  // BRANCH CONTEXT VALIDATION (DEFENSIVE)
-  // =========================================================================
-  
-  /// Validates that branch context is available.
-  /// This is a LAST LINE OF DEFENSE - UI should prevent reaching here without branch.
-  void _requireBranchContext(String operation) {
-    final branchService = BranchContextService.instance;
-    if (!branchService.hasBranch || branchService.activeBranch == null) {
-      LoggingService.instance.error(
-        'FinancialService',
-        'DEFENSIVE GUARD TRIGGERED: $operation attempted without active branch',
-      );
-      throw FinancialException(
-        'No active branch context. Please select a branch before performing financial operations.',
-        code: 'NO_BRANCH_CONTEXT',
-      );
-    }
-  }
-  
-  /// Validates that a branch ID matches the current active branch.
-  /// Prevents operations on wrong branch.
-  void _validateBranchId(String branchId, String operation) {
-    _requireBranchContext(operation);
-    final activeBranchId = BranchContextService.instance.activeBranchId;
-    if (branchId != activeBranchId) {
-      LoggingService.instance.warning(
-        'FinancialService',
-        '$operation: Branch ID mismatch - provided: $branchId, active: $activeBranchId',
-      );
-      // Allow operation but log the mismatch for debugging
-    }
-  }
 
   // =========================================================================
   // FINANCIAL SHIFT OPERATIONS
@@ -71,15 +39,11 @@ class FinancialService {
   /// 
   /// Throws if employee already has an open shift
   Future<FinancialShift> openShift({
-    required String branchId,
     required String employeeId,
     String? shiftId,
     double openingCash = 0,
     String? notes,
   }) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'openShift');
-    
     // Check for existing open shift
     final existingShift = await _financialShiftRepo.getOpenShiftForEmployee(employeeId);
     if (existingShift != null) {
@@ -92,7 +56,7 @@ class FinancialService {
     final now = DateTime.now();
     final financialShift = FinancialShift(
       id: _uuid.v4(),
-      branchId: branchId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
       shiftId: shiftId,
       employeeId: employeeId,
       openedAt: now,
@@ -117,9 +81,9 @@ class FinancialService {
     return _financialShiftRepo.getOpenShiftForEmployee(employeeId);
   }
 
-  /// Get all open shifts for a branch
-  Future<List<FinancialShift>> getOpenShiftsForBranch(String branchId) async {
-    return _financialShiftRepo.getOpenShiftsForBranch(branchId);
+  /// Get all open shifts for the branch
+  Future<List<FinancialShift>> getOpenShiftsForBranch() async {
+    return _financialShiftRepo.getOpenShiftsForBranch();
   }
 
   /// Get financial shift by ID
@@ -134,7 +98,6 @@ class FinancialService {
   /// Record a sale
   Future<ShiftSale> recordSale({
     required String financialShiftId,
-    required String branchId,
     required double amount,
     PaymentMethod paymentMethod = PaymentMethod.cash,
     String? description,
@@ -142,9 +105,6 @@ class FinancialService {
     String? customerName,
     String? recordedBy,
   }) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'recordSale');
-    
     // Verify shift is open
     final shift = await _financialShiftRepo.getById(financialShiftId);
     if (shift == null) {
@@ -163,7 +123,7 @@ class FinancialService {
     final sale = ShiftSale(
       id: _uuid.v4(),
       financialShiftId: financialShiftId,
-      branchId: branchId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
       amount: amount,
       paymentMethod: paymentMethod,
       description: description,
@@ -204,7 +164,6 @@ class FinancialService {
   /// Record an expense
   Future<ShiftExpense> recordExpense({
     required String financialShiftId,
-    required String branchId,
     required double amount,
     required String description,
     ExpenseCategory category = ExpenseCategory.misc,
@@ -212,9 +171,6 @@ class FinancialService {
     String? recordedBy,
     String? approvedBy,
   }) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'recordExpense');
-    
     // Verify shift is open
     final shift = await _financialShiftRepo.getById(financialShiftId);
     if (shift == null) {
@@ -233,7 +189,7 @@ class FinancialService {
     final expense = ShiftExpense(
       id: _uuid.v4(),
       financialShiftId: financialShiftId,
-      branchId: branchId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
       amount: amount,
       category: category,
       description: description,
@@ -330,7 +286,7 @@ class FinancialService {
     final closure = ShiftClosure(
       id: _uuid.v4(),
       financialShiftId: financialShiftId,
-      branchId: shift.branchId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
       totalSales: totalSales,
       totalCashSales: totalCashSales,
       totalCardSales: totalCardSales,
@@ -402,47 +358,37 @@ class FinancialService {
   // =========================================================================
 
   /// Get daily financial summary
-  Future<Map<String, dynamic>> getDailySummary(String branchId, DateTime date) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'getDailySummary');
-    
+  Future<Map<String, dynamic>> getDailySummary(DateTime date) async {
     final startOfDay = DateTime(date.year, date.month, date.day);
     final endOfDay = startOfDay.add(const Duration(days: 1));
     
-    return _shiftClosureRepo.getPeriodSummary(branchId, startOfDay, endOfDay);
+    return _shiftClosureRepo.getPeriodSummary('1', startOfDay, endOfDay);
   }
 
   /// Get monthly financial summary
-  Future<Map<String, dynamic>> getMonthlySummary(String branchId, int year, int month) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'getMonthlySummary');
-    
+  Future<Map<String, dynamic>> getMonthlySummary(int year, int month) async {
     final startOfMonth = DateTime(year, month, 1);
     final endOfMonth = DateTime(year, month + 1, 0, 23, 59, 59);
     
-    return _shiftClosureRepo.getPeriodSummary(branchId, startOfMonth, endOfMonth);
+    return _shiftClosureRepo.getPeriodSummary('1', startOfMonth, endOfMonth);
   }
 
   /// Get daily totals for a period
   Future<List<Map<String, dynamic>>> getDailyTotals(
-    String branchId,
     DateTime startDate,
     DateTime endDate,
   ) async {
-    return _shiftClosureRepo.getDailyTotals(branchId, startDate, endDate);
+    return _shiftClosureRepo.getDailyTotals('1', startDate, endDate);
   }
 
   /// Get closures with discrepancies
-  Future<List<ShiftClosure>> getDiscrepancies(String branchId, {int? limit}) async {
-    return _shiftClosureRepo.getClosuresWithDiscrepancies(branchId, limit: limit);
+  Future<List<ShiftClosure>> getDiscrepancies({int? limit}) async {
+    return _shiftClosureRepo.getClosuresWithDiscrepancies('1', limit: limit);
   }
 
   /// Get recent closed shifts
-  Future<List<FinancialShift>> getRecentClosedShifts(
-    String branchId, {
-    int limit = 50,
-  }) async {
-    return _financialShiftRepo.getByBranch(branchId, openOnly: false, limit: limit);
+  Future<List<FinancialShift>> getRecentClosedShifts({int limit = 50}) async {
+    return _financialShiftRepo.getByBranch(openOnly: false, limit: limit);
   }
 }
 

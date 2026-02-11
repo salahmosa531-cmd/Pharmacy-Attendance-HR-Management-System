@@ -2,9 +2,14 @@ import '../models/supplier_transaction_model.dart';
 import 'base_repository.dart';
 
 /// Repository for supplier transaction operations
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: All queries use hardcoded branch_id = '1'
 class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> {
   static final SupplierTransactionRepository _instance = SupplierTransactionRepository._();
   static SupplierTransactionRepository get instance => _instance;
+  
+  // SINGLE-BRANCH: Hardcoded branch ID
+  static const String _defaultBranchId = '1';
   
   SupplierTransactionRepository._();
 
@@ -15,7 +20,12 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
   SupplierTransaction fromMap(Map<String, dynamic> map) => SupplierTransaction.fromMap(map);
 
   @override
-  Map<String, dynamic> toMap(SupplierTransaction item) => item.toMap();
+  Map<String, dynamic> toMap(SupplierTransaction item) {
+    final map = item.toMap();
+    // SINGLE-BRANCH: Ensure branch_id is always '1'
+    map['branch_id'] = _defaultBranchId;
+    return map;
+  }
 
   /// Get transactions for a supplier
   Future<List<SupplierTransaction>> getBySupplier(
@@ -32,16 +42,15 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
     );
   }
 
-  /// Get transactions for a branch by date range
+  /// Get transactions by date range
   Future<List<SupplierTransaction>> getByDateRange(
-    String branchId,
     DateTime startDate,
     DateTime endDate,
   ) async {
     return getAll(
       where: 'branch_id = ? AND created_at >= ? AND created_at <= ?',
       whereArgs: [
-        branchId,
+        _defaultBranchId,
         startDate.toIso8601String(),
         endDate.toIso8601String(),
       ],
@@ -100,17 +109,14 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
   }
 
   /// Get upcoming payments (due within days)
-  Future<List<SupplierTransaction>> getUpcomingPayments(
-    String branchId, {
-    int withinDays = 7,
-  }) async {
+  Future<List<SupplierTransaction>> getUpcomingPayments({int withinDays = 7}) async {
     final now = DateTime.now();
     final futureDate = now.add(Duration(days: withinDays));
     
     return getAll(
       where: 'branch_id = ? AND transaction_type = ? AND due_date >= ? AND due_date <= ?',
       whereArgs: [
-        branchId,
+        _defaultBranchId,
         'purchase',
         now.toIso8601String(),
         futureDate.toIso8601String(),
@@ -121,7 +127,6 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
 
   /// Get branch summary for a period
   Future<Map<String, dynamic>> getBranchSummary(
-    String branchId,
     DateTime startDate,
     DateTime endDate,
   ) async {
@@ -136,7 +141,7 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
       WHERE branch_id = ? 
         AND created_at >= ? 
         AND created_at <= ?
-    ''', [branchId, startDate.toIso8601String(), endDate.toIso8601String()]);
+    ''', [_defaultBranchId, startDate.toIso8601String(), endDate.toIso8601String()]);
     
     if (result.isEmpty) {
       return {
@@ -193,14 +198,11 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
     };
   }
 
-  /// Get recent transactions for a branch
-  Future<List<SupplierTransaction>> getRecentTransactions(
-    String branchId, {
-    int limit = 50,
-  }) async {
+  /// Get recent transactions
+  Future<List<SupplierTransaction>> getRecentTransactions({int limit = 50}) async {
     return getAll(
       where: 'branch_id = ?',
-      whereArgs: [branchId],
+      whereArgs: [_defaultBranchId],
       orderBy: 'created_at DESC',
       limit: limit,
     );

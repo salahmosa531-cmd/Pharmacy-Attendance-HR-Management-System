@@ -623,6 +623,36 @@ class DatabaseService {
     batch.execute('CREATE INDEX idx_supplier_transactions_type ON supplier_transactions(transaction_type)');
     
     await batch.commit(noResult: true);
+    
+    // SINGLE-BRANCH ARCHITECTURE: Auto-create default branch with id = '1'
+    await _ensureDefaultBranch(db);
+  }
+  
+  /// Ensure the default branch exists (SINGLE-BRANCH ARCHITECTURE)
+  /// This creates the main branch with id = '1' if it doesn't exist
+  Future<void> _ensureDefaultBranch(Database db) async {
+    final now = DateTime.now().toIso8601String();
+    
+    // Check if default branch exists
+    final existing = await db.query(
+      'branches',
+      where: 'id = ?',
+      whereArgs: ['1'],
+      limit: 1,
+    );
+    
+    if (existing.isEmpty) {
+      _logMigration('Creating default branch (id=1) for single-branch architecture');
+      await db.insert('branches', {
+        'id': '1',
+        'name': 'Main Branch',
+        'is_main_branch': 1,
+        'is_active': 1,
+        'created_at': now,
+        'updated_at': now,
+      });
+      _logMigration('Default branch created successfully');
+    }
   }
   
   /// Handle database upgrades with safe production migrations
@@ -648,6 +678,9 @@ class DatabaseService {
     if (oldVersion < 3) {
       await _migrateToV3(db);
     }
+    
+    // SINGLE-BRANCH ARCHITECTURE: Ensure default branch exists for all upgrades
+    await _ensureDefaultBranch(db);
     
     _logMigration('Migration completed successfully');
   }

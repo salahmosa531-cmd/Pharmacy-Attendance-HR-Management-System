@@ -2,9 +2,10 @@ import 'dart:async';
 import 'package:uuid/uuid.dart';
 import '../constants/app_constants.dart';
 import 'database_service.dart';
-import 'branch_context_service.dart';
 
 /// Central Settings Manager with stream-based reactive updates
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: All operations use hardcoded branch_id = '1'
 /// 
 /// This service ensures:
 /// - All settings are persisted to SQLite immediately
@@ -15,8 +16,10 @@ class SettingsService {
   static SettingsService? _instance;
   
   final DatabaseService _databaseService = DatabaseService.instance;
-  final BranchContextService _branchContextService = BranchContextService.instance;
   final Uuid _uuid = const Uuid();
+  
+  // SINGLE-BRANCH: Hardcoded branch ID
+  static const String _branchId = '1';
   
   // Stream controller for settings changes
   final _settingsController = StreamController<SettingsState>.broadcast();
@@ -42,28 +45,20 @@ class SettingsService {
   
   /// Initialize settings from database
   Future<void> initialize([String? branchId]) async {
-    await _loadAllSettings(branchId);
+    await _loadAllSettings(branchId ?? _branchId);
     _notifyListeners();
   }
   
   /// Load all settings from database
   Future<void> _loadAllSettings([String? branchId]) async {
     final db = await _databaseService.database;
-    final effectiveBranchId = branchId ?? _branchContextService.activeBranchId;
+    final effectiveBranchId = branchId ?? _branchId;
     
-    List<Map<String, dynamic>> results;
-    if (effectiveBranchId != null) {
-      results = await db.query(
-        'settings',
-        where: 'branch_id = ? OR branch_id IS NULL',
-        whereArgs: [effectiveBranchId],
-      );
-    } else {
-      results = await db.query(
-        'settings',
-        where: 'branch_id IS NULL',
-      );
-    }
+    final results = await db.query(
+      'settings',
+      where: 'branch_id = ? OR branch_id IS NULL',
+      whereArgs: [effectiveBranchId],
+    );
     
     _cache.clear();
     for (final row in results) {
@@ -152,7 +147,6 @@ class SettingsService {
   /// Set a setting value - persists immediately and broadcasts change
   Future<void> setValue(String key, dynamic value, {String? category, String? description}) async {
     final db = await _databaseService.database;
-    final branchId = _branchContextService.activeBranchId;
     final now = DateTime.now().toIso8601String();
     
     // Determine value type
@@ -171,7 +165,7 @@ class SettingsService {
     final existing = await db.query(
       'settings',
       where: 'key = ? AND (branch_id = ? OR (branch_id IS NULL AND ? IS NULL))',
-      whereArgs: [key, branchId, branchId],
+      whereArgs: [key, _branchId, _branchId],
       limit: 1,
     );
     
@@ -189,7 +183,7 @@ class SettingsService {
     } else {
       await db.insert('settings', {
         'id': _uuid.v4(),
-        'branch_id': branchId,
+        'branch_id': _branchId,
         'key': key,
         'value': stringValue,
         'value_type': valueType,
@@ -205,7 +199,7 @@ class SettingsService {
     _cache[key] = value;
     
     // Reload state and notify
-    await _loadAllSettings(branchId);
+    await _loadAllSettings(_branchId);
     _notifyListeners();
   }
   
@@ -242,18 +236,15 @@ class SettingsService {
   /// Reset all settings to defaults
   Future<void> resetToDefaults() async {
     final db = await _databaseService.database;
-    final branchId = _branchContextService.activeBranchId;
     
-    if (branchId != null) {
-      await db.delete(
-        'settings',
-        where: 'branch_id = ? AND is_system = 0',
-        whereArgs: [branchId],
-      );
-    }
+    await db.delete(
+      'settings',
+      where: 'branch_id = ? AND is_system = 0',
+      whereArgs: [_branchId],
+    );
     
     _cache.clear();
-    await _loadAllSettings(branchId);
+    await _loadAllSettings(_branchId);
     _notifyListeners();
   }
   

@@ -4,19 +4,23 @@ import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 import '../../data/repositories/repositories.dart';
 import '../constants/app_constants.dart';
-import 'branch_context_service.dart';
 import 'device_service.dart';
 import 'database_service.dart';
 import 'logging_service.dart';
 
 /// Service for QR code generation and validation (anti-fraud)
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: All operations use hardcoded branch_id = '1'
 class QrService {
   static QrService? _instance;
   
-  final BranchContextService _branchContextService = BranchContextService.instance;
   final DeviceService _deviceService = DeviceService.instance;
   final Uuid _uuid = const Uuid();
   final Random _random = Random.secure();
+  
+  // SINGLE-BRANCH: Hardcoded branch ID
+  static const String _branchId = '1';
+  static const String _branchName = 'Main Branch';
   
   String? _currentToken;
   DateTime? _tokenGeneratedAt;
@@ -30,17 +34,12 @@ class QrService {
   
   /// Generate a new QR token
   Future<String> generateToken() async {
-    final branchId = _branchContextService.activeBranchId;
-    if (branchId == null) {
-      throw Exception('No branch selected');
-    }
-    
     final deviceId = await _deviceService.getDeviceId();
     final timestamp = DateTime.now();
     
     // Create token data
     final tokenData = {
-      'branch_id': branchId,
+      'branch_id': _branchId,
       'device_id': deviceId,
       'timestamp': timestamp.millisecondsSinceEpoch,
       'nonce': _generateNonce(),
@@ -61,7 +60,7 @@ class QrService {
     
     await db.insert('qr_codes', {
       'id': _uuid.v4(),
-      'branch_id': branchId,
+      'branch_id': _branchId,
       'token': token,
       'generated_at': timestamp.toIso8601String(),
       'expires_at': expiresAt.toIso8601String(),
@@ -121,8 +120,7 @@ class QrService {
       }
       
       // Check if token is from current branch
-      final currentBranchId = _branchContextService.activeBranchId;
-      if (branchId != currentBranchId) {
+      if (branchId != _branchId) {
         return QrValidationResult(
           isValid: false,
           error: 'QR code is for a different branch',
@@ -231,7 +229,7 @@ class QrService {
       'token': token,
       'generated_at': _tokenGeneratedAt?.toIso8601String(),
       'expires_in_seconds': AppConstants.qrRefreshSeconds,
-      'branch_name': _branchContextService.activeBranch?.name,
+      'branch_name': _branchName,
     };
   }
 }

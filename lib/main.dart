@@ -5,7 +5,6 @@ import 'package:window_manager/window_manager.dart';
 import 'core/services/database_service.dart';
 import 'core/services/settings_service.dart';
 import 'core/services/logging_service.dart';
-import 'core/services/branch_context_service.dart';
 import 'core/services/auth_service.dart';
 import 'app.dart';
 
@@ -39,7 +38,7 @@ void main() async {
   DatabaseService.initializeFfi();
   LoggingService.instance.info('App', 'Database FFI initialized');
   
-  // Initialize database
+  // Initialize database (this also creates default branch with id='1')
   await DatabaseService.instance.database;
   LoggingService.instance.database('Database opened');
   
@@ -54,26 +53,18 @@ void main() async {
   // Clean up old log files
   await LoggingService.instance.cleanupOldLogs();
   
-  // Initialize branch context service (handles branch selection and auto-selection)
-  // This will also initialize SettingsService if a branch is already selected
-  await BranchContextService.instance.initialize();
-  LoggingService.instance.info('App', 'Branch context service initialized');
+  // SINGLE-BRANCH ARCHITECTURE: No branch context service needed
+  // Default branch with id='1' is automatically created in database
+  
+  // Initialize settings service (no branch context needed)
+  await SettingsService.instance.initialize();
+  LoggingService.instance.info('App', 'Settings service initialized');
   
   // Restore persisted admin session per auth policy
   await AuthService.instance.initializeSession();
   LoggingService.instance.info('App', 'Auth session policy evaluated');
 
-  // Log branch context state
-  final branchState = BranchContextService.instance.state;
-  if (branchState.hasBranch) {
-    LoggingService.instance.info('App', 'Active branch: ${branchState.activeBranch!.name}');
-  } else if (branchState.availableBranches.isEmpty) {
-    LoggingService.instance.info('App', 'No branches available - needs setup');
-  } else {
-    LoggingService.instance.info('App', 'Branch selection required - ${branchState.availableBranches.length} branches available');
-  }
-  
-  LoggingService.instance.info('App', 'Application startup complete');
+  LoggingService.instance.info('App', 'Application startup complete (Single-Branch Mode)');
   
   // Run the app
   runApp(const PharmacyAttendanceApp());

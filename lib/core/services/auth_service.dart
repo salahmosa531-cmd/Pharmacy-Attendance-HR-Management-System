@@ -7,13 +7,17 @@ import '../../data/models/user_model.dart';
 import '../../data/models/branch_model.dart';
 import '../../data/repositories/user_repository.dart';
 import '../../data/repositories/branch_repository.dart';
+import '../../data/repositories/shift_repository.dart';
 import '../../data/repositories/audit_repository.dart';
 import '../../data/models/audit_log_model.dart';
+import '../../data/models/shift_model.dart';
+import 'package:flutter/material.dart';
 import '../constants/app_constants.dart';
-import 'branch_context_service.dart';
 import 'logging_service.dart';
 
 /// Authentication service for user login/logout
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: All operations use hardcoded branch_id = '1'
 
 /// Session persistence policy for admin authentication.
 class AuthSessionPolicy {
@@ -34,11 +38,17 @@ class AuthService {
   
   final UserRepository _userRepository = UserRepository.instance;
   final BranchRepository _branchRepository = BranchRepository.instance;
+  final ShiftRepository _shiftRepository = ShiftRepository.instance;
   final AuditRepository _auditRepository = AuditRepository.instance;
   final Uuid _uuid = const Uuid();
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   
+  // SINGLE-BRANCH: Hardcoded branch ID and name
+  static const String _branchId = '1';
+  static const String _branchName = 'Main Branch';
+  
   User? _currentUser;
+  Branch? _currentBranch;
   
   AuthService._();
   
@@ -50,8 +60,8 @@ class AuthService {
   /// Get current logged in user
   User? get currentUser => _currentUser;
   
-  /// Get current branch from BranchContextService (single source of truth)
-  Branch? get currentBranch => BranchContextService.instance.activeBranch;
+  /// Get current branch (always the default branch in single-branch mode)
+  Branch? get currentBranch => _currentBranch;
   
   /// Check if user is logged in
   bool get isLoggedIn => _currentUser != null;
@@ -107,7 +117,7 @@ class AuthService {
       salt: salt,
       role: role,
       employeeId: employeeId,
-      branchId: branchId,
+      branchId: branchId ?? _branchId, // SINGLE-BRANCH: Default to '1'
       createdAt: now,
       updatedAt: now,
     );
@@ -117,7 +127,7 @@ class AuthService {
     // Log the action
     await _auditRepository.log(
       id: _uuid.v4(),
-      branchId: branchId,
+      branchId: _branchId,
       userId: _currentUser?.id,
       action: AuditAction.create,
       entityType: AuditEntityType.user,
@@ -153,24 +163,13 @@ class AuthService {
       await _persistSession(_currentUser!.id);
     }
     
-    // Resolve and set active branch using BranchContextService as single source of truth
-    final resolvedBranch = user.branchId != null
-        ? await _branchRepository.getById(user.branchId!)
-        : await _branchRepository.getMainBranch();
-
-    if (resolvedBranch != null) {
-      try {
-        await BranchContextService.instance.setActiveBranch(resolvedBranch);
-        LoggingService.instance.info('Auth', 'Set branch context to ${resolvedBranch.name}');
-      } catch (e) {
-        LoggingService.instance.warning('Auth', 'Failed to set branch context: $e');
-      }
-    }
+    // Load the default branch
+    _currentBranch = await _branchRepository.getById(_branchId);
     
     // Log the login
     await _auditRepository.log(
       id: _uuid.v4(),
-      branchId: currentBranch?.id,
+      branchId: _branchId,
       userId: user.id,
       action: AuditAction.login,
       entityType: AuditEntityType.user,
@@ -187,7 +186,7 @@ class AuthService {
       // Log the logout
       await _auditRepository.log(
         id: _uuid.v4(),
-        branchId: currentBranch?.id,
+        branchId: _branchId,
         userId: _currentUser!.id,
         action: AuditAction.logout,
         entityType: AuditEntityType.user,
@@ -244,32 +243,13 @@ class AuthService {
     // Log the action
     await _auditRepository.log(
       id: _uuid.v4(),
-      branchId: currentBranch?.id,
+      branchId: _branchId,
       userId: _currentUser!.id,
       action: AuditAction.update,
       entityType: AuditEntityType.user,
       entityId: userId,
       newValues: {'password_reset': true},
     );
-  }
-  
-  /// Switch branch (for users with access to multiple branches)
-  Future<void> switchBranch(String branchId) async {
-    if (_currentUser == null) {
-      throw Exception('Not logged in');
-    }
-    
-    // Super admins can switch to any branch
-    if (!isSuperAdmin && _currentUser!.branchId != branchId) {
-      throw Exception('Unauthorized to access this branch');
-    }
-    
-    final branch = await _branchRepository.getById(branchId);
-    if (branch == null || !branch.isActive) {
-      throw Exception('Branch not found or inactive');
-    }
-    
-    await BranchContextService.instance.setActiveBranch(branch);
   }
   
   /// Check if current user has permission
@@ -291,14 +271,14 @@ class AuthService {
     
     LoggingService.instance.info('Auth', 'Creating initial setup with branch: $branchName');
     
-    // Create the main branch with default shifts using BranchContextService
-    final branch = await BranchContextService.instance.createBranchWithDefaults(
+    // Create the main branch with hardcoded ID
+    final branch = await _createBranchWithDefaults(
       name: branchName,
-      setAsActive: true, // This is the first branch, so set it as active
     );
     
     // Set as main branch
     await _branchRepository.setAsMainBranch(branch.id);
+    _currentBranch = branch;
     
     LoggingService.instance.info('Auth', 'Created main branch: ${branch.id}');
     
@@ -315,9 +295,84 @@ class AuthService {
     return user;
   }
   
+  /// Create branch with default shifts
+  Future<Branch> _createBranchWithDefaults({required String name}) async {
+    final now = DateTime.now();
+    
+    // Use hardcoded branch ID for single-branch architecture
+    final branch = Branch(
+      id: _branchId,
+      name: name,
+      isMainBranch: true,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    );
+    
+    // Insert or update the branch
+    final existing = await _branchRepository.getById(_branchId);
+    if (existing != null) {
+      await _branchRepository.update(branch, _branchId);
+    } else {
+      await _branchRepository.insert(branch);
+    }
+    
+    // Create default shifts
+    await _createDefaultShifts(branch.id);
+    
+    return branch;
+  }
+  
+  /// Create default work shifts
+  Future<void> _createDefaultShifts(String branchId) async {
+    final shifts = [
+      Shift(
+        id: _uuid.v4(),
+        branchId: branchId,
+        name: 'Morning Shift',
+        startTime: const TimeOfDay(hour: 8, minute: 0),
+        endTime: const TimeOfDay(hour: 16, minute: 0),
+        gracePeriodMinutes: 15,
+        isActive: true,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      ),
+      Shift(
+        id: _uuid.v4(),
+        branchId: branchId,
+        name: 'Evening Shift',
+        startTime: const TimeOfDay(hour: 16, minute: 0),
+        endTime: const TimeOfDay(hour: 0, minute: 0),
+        gracePeriodMinutes: 15,
+        isActive: true,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      ),
+      Shift(
+        id: _uuid.v4(),
+        branchId: branchId,
+        name: 'Night Shift',
+        startTime: const TimeOfDay(hour: 0, minute: 0),
+        endTime: const TimeOfDay(hour: 8, minute: 0),
+        gracePeriodMinutes: 15,
+        isActive: true,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      ),
+    ];
+    
+    for (final shift in shifts) {
+      await _shiftRepository.insert(shift);
+    }
+    
+    LoggingService.instance.info('Auth', 'Created ${shifts.length} default shifts for branch $branchId');
+  }
 
   /// Initialize and restore persisted admin session based on policy.
   Future<void> initializeSession() async {
+    // Always load the default branch
+    _currentBranch = await _branchRepository.getById(_branchId);
+    
     if (!AuthSessionPolicy.persistAdminSession) {
       await _clearPersistedSession();
       return;

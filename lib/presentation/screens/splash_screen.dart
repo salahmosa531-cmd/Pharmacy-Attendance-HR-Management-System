@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/services/auth_service.dart';
-import '../../core/services/branch_context_service.dart';
 import '../../core/services/logging_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/constants/app_constants.dart';
 
 /// Splash screen shown on app startup
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: No branch selection needed.
+/// App goes directly to setup (if needed) or kiosk mode.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -60,31 +62,20 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     if (!mounted) return;
     
     final authService = AuthService.instance;
-    final branchService = BranchContextService.instance;
     final needsSetup = await authService.needsInitialSetup();
     
     if (!mounted) return;
     
-    // Navigation Flow:
+    // SINGLE-BRANCH ARCHITECTURE - Simplified Navigation Flow:
     // 1. If needs setup (no users) -> /setup
-    // 2. If no branches available -> /setup 
-    // 3. If has branch (auto-selected or previously selected) -> /kiosk
-    // 4. If has branches but none selected -> /select-branch
+    // 2. Otherwise -> /kiosk (default public attendance screen)
     
     if (needsSetup) {
       LoggingService.instance.navigation('/', '/setup', 'needs initial setup');
       context.go('/setup');
-    } else if (branchService.state.availableBranches.isEmpty) {
-      LoggingService.instance.navigation('/', '/setup', 'no branches available');
-      context.go('/setup');
-    } else if (branchService.hasBranch) {
-      LoggingService.instance.navigation('/', '/kiosk', 'branch available: ${branchService.activeBranch?.name}');
-      // Default to Kiosk mode - the public attendance screen
-      // Admin can access dashboard via hidden shortcut (Ctrl+Shift+A) or login
-      context.go('/kiosk');
     } else {
-      LoggingService.instance.navigation('/', '/select-branch', 'branch selection required');
-      context.go('/select-branch');
+      LoggingService.instance.navigation('/', '/kiosk', 'single-branch mode - direct to kiosk');
+      context.go('/kiosk');
     }
   }
   

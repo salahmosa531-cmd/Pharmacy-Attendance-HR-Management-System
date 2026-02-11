@@ -4,9 +4,11 @@ import '../../data/models/supplier_transaction_model.dart';
 import '../../data/repositories/supplier_repository.dart';
 import '../../data/repositories/supplier_transaction_repository.dart';
 import 'logging_service.dart';
-import 'branch_context_service.dart';
 
 /// Supplier Service - Manages pharma company relationships and transactions
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: All operations use hardcoded branch_id = '1'
+/// Branch context validation has been removed for offline-first single-branch mode.
 /// 
 /// Handles:
 /// - Supplier CRUD operations
@@ -22,38 +24,6 @@ class SupplierService {
   final _uuid = const Uuid();
   
   SupplierService._();
-  
-  // =========================================================================
-  // BRANCH CONTEXT VALIDATION (DEFENSIVE)
-  // =========================================================================
-  
-  /// Validates that branch context is available.
-  /// This is a LAST LINE OF DEFENSE - UI should prevent reaching here without branch.
-  void _requireBranchContext(String operation) {
-    final branchService = BranchContextService.instance;
-    if (!branchService.hasBranch || branchService.activeBranch == null) {
-      LoggingService.instance.error(
-        'SupplierService',
-        'DEFENSIVE GUARD TRIGGERED: $operation attempted without active branch',
-      );
-      throw SupplierException(
-        'No active branch context. Please select a branch before performing supplier operations.',
-        code: 'NO_BRANCH_CONTEXT',
-      );
-    }
-  }
-  
-  /// Validates that a branch ID matches the current active branch.
-  void _validateBranchId(String branchId, String operation) {
-    _requireBranchContext(operation);
-    final activeBranchId = BranchContextService.instance.activeBranchId;
-    if (branchId != activeBranchId) {
-      LoggingService.instance.warning(
-        'SupplierService',
-        '$operation: Branch ID mismatch - provided: $branchId, active: $activeBranchId',
-      );
-    }
-  }
 
   // =========================================================================
   // SUPPLIER OPERATIONS
@@ -61,7 +31,6 @@ class SupplierService {
 
   /// Create a new supplier
   Future<Supplier> createSupplier({
-    required String branchId,
     required String name,
     String? code,
     String? phone,
@@ -73,11 +42,8 @@ class SupplierService {
     double creditLimit = 0,
     String? notes,
   }) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'createSupplier');
-    
     // Check for duplicate name
-    if (await _supplierRepo.nameExists(branchId, name)) {
+    if (await _supplierRepo.nameExists(name)) {
       throw SupplierException(
         'A supplier with this name already exists',
         code: 'DUPLICATE_NAME',
@@ -87,7 +53,7 @@ class SupplierService {
     final now = DateTime.now();
     final supplier = Supplier(
       id: _uuid.v4(),
-      branchId: branchId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
       name: name,
       code: code,
       phone: phone,
@@ -137,7 +103,7 @@ class SupplierService {
 
     // Check for duplicate name if name is being changed
     if (name != null && name != existing.name) {
-      if (await _supplierRepo.nameExists(existing.branchId, name, excludeId: supplierId)) {
+      if (await _supplierRepo.nameExists(name, excludeId: supplierId)) {
         throw SupplierException(
           'A supplier with this name already exists',
           code: 'DUPLICATE_NAME',
@@ -174,17 +140,14 @@ class SupplierService {
     return _supplierRepo.getById(supplierId);
   }
 
-  /// Get all suppliers for a branch
-  Future<List<Supplier>> getSuppliersByBranch(
-    String branchId, {
-    bool activeOnly = true,
-  }) async {
-    return _supplierRepo.getByBranch(branchId, activeOnly: activeOnly);
+  /// Get all suppliers
+  Future<List<Supplier>> getSuppliers({bool activeOnly = true}) async {
+    return _supplierRepo.getByBranch(activeOnly: activeOnly);
   }
 
   /// Search suppliers
-  Future<List<Supplier>> searchSuppliers(String branchId, String query) async {
-    return _supplierRepo.search(branchId, query);
+  Future<List<Supplier>> searchSuppliers(String query) async {
+    return _supplierRepo.search(query);
   }
 
   /// Deactivate a supplier
@@ -212,7 +175,6 @@ class SupplierService {
   /// Record a purchase from a supplier
   Future<SupplierTransaction> recordPurchase({
     required String supplierId,
-    required String branchId,
     required double amount,
     String? invoiceNumber,
     DateTime? invoiceDate,
@@ -220,9 +182,6 @@ class SupplierService {
     String? notes,
     String? recordedBy,
   }) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'recordPurchase');
-    
     // Verify supplier exists
     final supplier = await _supplierRepo.getById(supplierId);
     if (supplier == null) {
@@ -240,7 +199,7 @@ class SupplierService {
     final transaction = SupplierTransaction(
       id: _uuid.v4(),
       supplierId: supplierId,
-      branchId: branchId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
       transactionType: SupplierTransactionType.purchase,
       amount: amount,
       invoiceNumber: invoiceNumber,
@@ -264,16 +223,12 @@ class SupplierService {
   /// Record a payment to a supplier
   Future<SupplierTransaction> recordPayment({
     required String supplierId,
-    required String branchId,
     required double amount,
     String? paymentMethod,
     String? referenceNumber,
     String? notes,
     String? recordedBy,
   }) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'recordPayment');
-    
     // Verify supplier exists
     final supplier = await _supplierRepo.getById(supplierId);
     if (supplier == null) {
@@ -287,7 +242,7 @@ class SupplierService {
     final transaction = SupplierTransaction(
       id: _uuid.v4(),
       supplierId: supplierId,
-      branchId: branchId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
       transactionType: SupplierTransactionType.payment,
       amount: amount,
       paymentMethod: paymentMethod,
@@ -310,7 +265,6 @@ class SupplierService {
   /// Record a return of goods to supplier
   Future<SupplierTransaction> recordReturn({
     required String supplierId,
-    required String branchId,
     required double amount,
     String? invoiceNumber,
     String? notes,
@@ -320,7 +274,7 @@ class SupplierService {
     final transaction = SupplierTransaction(
       id: _uuid.v4(),
       supplierId: supplierId,
-      branchId: branchId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
       transactionType: SupplierTransactionType.returnGoods,
       amount: amount,
       invoiceNumber: invoiceNumber,
@@ -381,16 +335,13 @@ class SupplierService {
   }
 
   /// Get all suppliers with balances
-  Future<List<Map<String, dynamic>>> getSuppliersWithBalances(String branchId) async {
-    // DEFENSIVE: Validate branch context
-    _validateBranchId(branchId, 'getSuppliersWithBalances');
-    
-    return _supplierRepo.getSuppliersWithBalances(branchId);
+  Future<List<Map<String, dynamic>>> getSuppliersWithBalances() async {
+    return _supplierRepo.getSuppliersWithBalances();
   }
 
   /// Get suppliers with overdue invoices
-  Future<List<Map<String, dynamic>>> getSuppliersWithOverdue(String branchId) async {
-    return _supplierRepo.getSuppliersWithOverdueInvoices(branchId);
+  Future<List<Map<String, dynamic>>> getSuppliersWithOverdue() async {
+    return _supplierRepo.getSuppliersWithOverdueInvoices();
   }
 
   /// Get overdue invoices for a supplier
@@ -399,28 +350,21 @@ class SupplierService {
   }
 
   /// Get upcoming payments due
-  Future<List<SupplierTransaction>> getUpcomingPayments(
-    String branchId, {
-    int withinDays = 7,
-  }) async {
-    return _transactionRepo.getUpcomingPayments(branchId, withinDays: withinDays);
+  Future<List<SupplierTransaction>> getUpcomingPayments({int withinDays = 7}) async {
+    return _transactionRepo.getUpcomingPayments(withinDays: withinDays);
   }
 
   /// Get branch transaction summary
   Future<Map<String, dynamic>> getBranchSummary(
-    String branchId,
     DateTime startDate,
     DateTime endDate,
   ) async {
-    return _transactionRepo.getBranchSummary(branchId, startDate, endDate);
+    return _transactionRepo.getBranchSummary(startDate, endDate);
   }
 
   /// Get top suppliers by balance (amount owed)
-  Future<List<Map<String, dynamic>>> getTopSuppliersByBalance(
-    String branchId, {
-    int limit = 10,
-  }) async {
-    final suppliers = await _supplierRepo.getSuppliersWithBalances(branchId);
+  Future<List<Map<String, dynamic>>> getTopSuppliersByBalance({int limit = 10}) async {
+    final suppliers = await _supplierRepo.getSuppliersWithBalances();
     suppliers.sort((a, b) => (b['balance'] as num).toDouble().compareTo(
           (a['balance'] as num).toDouble(),
         ));
@@ -428,8 +372,8 @@ class SupplierService {
   }
 
   /// Get total amount owed to all suppliers
-  Future<double> getTotalOwed(String branchId) async {
-    final suppliers = await _supplierRepo.getSuppliersWithBalances(branchId);
+  Future<double> getTotalOwed() async {
+    final suppliers = await _supplierRepo.getSuppliersWithBalances();
     double total = 0;
     for (final s in suppliers) {
       final balance = (s['balance'] as num).toDouble();
