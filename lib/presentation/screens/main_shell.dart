@@ -333,7 +333,9 @@ class _MainShellState extends State<MainShell> {
                           ),
                         ],
                         
-                        if (authService.isSuperAdmin) ...[
+                        // SINGLE-BRANCH: Branch management UI disabled
+                        // Branch nav item removed to prevent branch creation/switching
+                        /* if (authService.isSuperAdmin) ...[
                           _buildNavItem(
                             context,
                             index: 8,
@@ -342,7 +344,7 @@ class _MainShellState extends State<MainShell> {
                             label: context.tr('branches'),
                             isSelected: selectedIndex == 8,
                           ),
-                        ],
+                        ], */
                         
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 8),
@@ -680,7 +682,8 @@ class _MainShellState extends State<MainShell> {
                 // TODO: Show change password dialog
               },
             ),
-            if (authService.isSuperAdmin) ...[
+            // SINGLE-BRANCH: Switch Branch option disabled
+            /* if (authService.isSuperAdmin) ...[
               ListTile(
                 leading: const Icon(Icons.swap_horiz),
                 title: const Text('Switch Branch'),
@@ -689,7 +692,7 @@ class _MainShellState extends State<MainShell> {
                   // TODO: Show branch switcher
                 },
               ),
-            ],
+            ], */
             const Divider(),
             ListTile(
               leading: const Icon(Icons.logout, color: AppTheme.errorColor),

@@ -28,14 +28,15 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
   }
 
   /// Get transactions for a supplier
+  /// SINGLE-BRANCH: Includes branch_id = '1' filter
   Future<List<SupplierTransaction>> getBySupplier(
     String supplierId, {
     int? limit,
     int? offset,
   }) async {
     return getAll(
-      where: 'supplier_id = ?',
-      whereArgs: [supplierId],
+      where: 'supplier_id = ? AND branch_id = ?',
+      whereArgs: [supplierId, _defaultBranchId],
       orderBy: 'created_at DESC',
       limit: limit,
       offset: offset,
@@ -59,6 +60,7 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
   }
 
   /// Get supplier balance (purchases - payments)
+  /// SINGLE-BRANCH: Includes branch_id = '1' filter
   Future<double> getSupplierBalance(String supplierId) async {
     final db = await database;
     final result = await db.rawQuery('''
@@ -66,44 +68,47 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
         COALESCE(SUM(CASE WHEN transaction_type = 'purchase' THEN amount ELSE 0 END), 0) -
         COALESCE(SUM(CASE WHEN transaction_type = 'payment' THEN amount ELSE 0 END), 0) as balance
       FROM $tableName 
-      WHERE supplier_id = ?
-    ''', [supplierId]);
+      WHERE supplier_id = ? AND branch_id = ?
+    ''', [supplierId, _defaultBranchId]);
     
     if (result.isEmpty) return 0;
     return (result.first['balance'] as num?)?.toDouble() ?? 0;
   }
 
   /// Get total purchases for a supplier
+  /// SINGLE-BRANCH: Includes branch_id = '1' filter
   Future<double> getTotalPurchases(String supplierId) async {
     final db = await database;
     final result = await db.rawQuery('''
       SELECT COALESCE(SUM(amount), 0) as total 
       FROM $tableName 
-      WHERE supplier_id = ? AND transaction_type = 'purchase'
-    ''', [supplierId]);
+      WHERE supplier_id = ? AND branch_id = ? AND transaction_type = 'purchase'
+    ''', [supplierId, _defaultBranchId]);
     
     if (result.isEmpty) return 0;
     return (result.first['total'] as num?)?.toDouble() ?? 0;
   }
 
   /// Get total payments for a supplier
+  /// SINGLE-BRANCH: Includes branch_id = '1' filter
   Future<double> getTotalPayments(String supplierId) async {
     final db = await database;
     final result = await db.rawQuery('''
       SELECT COALESCE(SUM(amount), 0) as total 
       FROM $tableName 
-      WHERE supplier_id = ? AND transaction_type = 'payment'
-    ''', [supplierId]);
+      WHERE supplier_id = ? AND branch_id = ? AND transaction_type = 'payment'
+    ''', [supplierId, _defaultBranchId]);
     
     if (result.isEmpty) return 0;
     return (result.first['total'] as num?)?.toDouble() ?? 0;
   }
 
   /// Get overdue invoices for a supplier
+  /// SINGLE-BRANCH: Includes branch_id = '1' filter
   Future<List<SupplierTransaction>> getOverdueInvoices(String supplierId) async {
     return getAll(
-      where: 'supplier_id = ? AND transaction_type = ? AND due_date < ?',
-      whereArgs: [supplierId, 'purchase', DateTime.now().toIso8601String()],
+      where: 'supplier_id = ? AND branch_id = ? AND transaction_type = ? AND due_date < ?',
+      whereArgs: [supplierId, _defaultBranchId, 'purchase', DateTime.now().toIso8601String()],
       orderBy: 'due_date ASC',
     );
   }
@@ -161,6 +166,7 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
   }
 
   /// Get supplier summary
+  /// SINGLE-BRANCH: Includes branch_id = '1' filter
   Future<Map<String, dynamic>> getSupplierSummary(String supplierId) async {
     final db = await database;
     final result = await db.rawQuery('''
@@ -171,8 +177,8 @@ class SupplierTransactionRepository extends BaseRepository<SupplierTransaction> 
         COALESCE(SUM(CASE WHEN transaction_type = 'payment' THEN amount ELSE 0 END), 0) as total_payments,
         COUNT(CASE WHEN transaction_type = 'purchase' AND due_date < datetime('now') THEN 1 END) as overdue_count
       FROM $tableName 
-      WHERE supplier_id = ?
-    ''', [supplierId]);
+      WHERE supplier_id = ? AND branch_id = ?
+    ''', [supplierId, _defaultBranchId]);
     
     if (result.isEmpty) {
       return {

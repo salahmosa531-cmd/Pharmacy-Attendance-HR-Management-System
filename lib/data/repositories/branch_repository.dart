@@ -2,7 +2,14 @@ import '../models/branch_model.dart';
 import 'base_repository.dart';
 
 /// Repository for branch/pharmacy operations
+/// 
+/// SINGLE-BRANCH ARCHITECTURE:
+/// - Only one branch with id='1' is supported
+/// - Branch creation/deletion methods throw exceptions
+/// - Branch table retained for FK safety
 class BranchRepository extends BaseRepository<Branch> {
+  // SINGLE-BRANCH: Default branch ID constant
+  static const String defaultBranchId = '1';
   static BranchRepository? _instance;
   
   BranchRepository._();
@@ -118,5 +125,46 @@ class BranchRepository extends BaseRepository<Branch> {
     
     final count = await this.count(where: where, whereArgs: whereArgs);
     return count > 0;
+  }
+  
+  // =========================================
+  // SINGLE-BRANCH: DISABLED OPERATIONS
+  // =========================================
+  
+  /// Get the default branch (always branch '1' in single-branch mode)
+  Future<Branch?> getDefaultBranch() async {
+    return await getById(defaultBranchId);
+  }
+  
+  /// SINGLE-BRANCH: Branch creation is disabled
+  /// @deprecated Use getDefaultBranch() instead
+  /// @throws Exception always - branch creation not allowed
+  @override
+  Future<void> insert(Branch item) async {
+    // Allow initial seeding of the default branch only
+    if (item.id == defaultBranchId) {
+      final existing = await getById(defaultBranchId);
+      if (existing == null) {
+        await super.insert(item);
+        return;
+      }
+    }
+    throw Exception('Branch creation is disabled in single-branch mode. Only the default branch (id=$defaultBranchId) is supported.');
+  }
+  
+  /// SINGLE-BRANCH: Branch deletion is disabled
+  /// @deprecated Branch deletion not allowed
+  /// @throws Exception always - branch deletion not allowed
+  @override
+  Future<void> delete(String id) async {
+    throw Exception('Branch deletion is disabled in single-branch mode. The default branch cannot be deleted.');
+  }
+  
+  /// SINGLE-BRANCH: Bulk operations are disabled
+  /// @deprecated Bulk operations not allowed
+  /// @throws Exception always
+  @override
+  Future<void> deleteAll() async {
+    throw Exception('Branch deletion is disabled in single-branch mode.');
   }
 }

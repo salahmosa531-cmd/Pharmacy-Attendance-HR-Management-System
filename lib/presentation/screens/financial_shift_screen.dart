@@ -709,7 +709,15 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     );
   }
 
+  /// Check if current user has valid employee context
+  bool get _hasEmployeeContext => _authService.currentUser?.employeeId != null;
+  
   Widget _buildNoShiftView() {
+    // Guard: Check if user has employee context
+    if (!_hasEmployeeContext) {
+      return _buildNoEmployeeContextView();
+    }
+    
     return Center(
       child: Card(
         margin: const EdgeInsets.all(32),
@@ -741,6 +749,95 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                 onPressed: _openShift,
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Open New Shift'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  /// View displayed when user account is not linked to an employee profile
+  Widget _buildNoEmployeeContextView() {
+    return Center(
+      child: Card(
+        margin: const EdgeInsets.all(32),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(40),
+                ),
+                child: Icon(
+                  Icons.person_off,
+                  size: 48,
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Employee Profile Required',
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.error.withValues(alpha: 0.5),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.warning_amber,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        'This account is not linked to an employee profile.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'To open a financial shift, your user account must be linked to an employee record. Please contact your administrator to:\n\n• Create an employee profile for you, or\n• Link your user account to an existing employee profile',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 24),
+              FilledButton.tonalIcon(
+                onPressed: null, // Disabled
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Open New Shift'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Button disabled until employee profile is linked',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.outline,
+                  fontStyle: FontStyle.italic,
+                ),
               ),
             ],
           ),

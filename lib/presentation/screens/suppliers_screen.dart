@@ -25,6 +25,7 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
   final _authService = AuthService.instance;
   
   bool _isLoading = true;
+  String? _loadErrorMessage;
   List<Map<String, dynamic>> _suppliersWithBalances = [];
   String _searchQuery = '';
   
@@ -38,17 +39,17 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
   }
 
   Future<void> _loadSuppliers() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadErrorMessage = null;
+    });
     
     try {
       // Service now uses hardcoded branch_id = '1'
       _suppliersWithBalances = await _supplierService.getSuppliersWithBalances();
+      _loadErrorMessage = null;
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading suppliers: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _loadErrorMessage = e.toString();
     }
     
     if (mounted) {
@@ -653,21 +654,23 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _filteredSuppliers.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.business, size: 64, color: Theme.of(context).colorScheme.outline),
-                            const SizedBox(height: 16),
-                            Text(
-                              _searchQuery.isEmpty ? 'No suppliers yet' : 'No matching suppliers',
-                              style: Theme.of(context).textTheme.bodyLarge,
+                : _loadErrorMessage != null
+                    ? _buildErrorPanel()
+                    : _filteredSuppliers.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.business, size: 64, color: Theme.of(context).colorScheme.outline),
+                                const SizedBox(height: 16),
+                                Text(
+                                  _searchQuery.isEmpty ? 'No suppliers yet' : 'No matching suppliers',
+                                  style: Theme.of(context).textTheme.bodyLarge,
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
+                          )
+                        : ListView.builder(
                         itemCount: _filteredSuppliers.length,
                         itemBuilder: (context, index) {
                           final supplier = _filteredSuppliers[index];
@@ -716,6 +719,57 @@ class _SuppliersScreenState extends State<SuppliersScreen> {
         onPressed: _addSupplier,
         icon: const Icon(Icons.add),
         label: const Text('Add Supplier'),
+      ),
+    );
+  }
+  
+  /// Build error panel with retry button
+  Widget _buildErrorPanel() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Card(
+          color: Theme.of(context).colorScheme.errorContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 64,
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Failed to Load Suppliers',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _loadErrorMessage ?? 'An unknown error occurred',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.onErrorContainer,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: _loadSuppliers,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.onErrorContainer,
+                    foregroundColor: Theme.of(context).colorScheme.errorContainer,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
