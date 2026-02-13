@@ -8,6 +8,10 @@ import '../../data/repositories/employee_repository.dart';
 import '../../data/repositories/shift_repository.dart';
 
 /// Branches management screen (enterprise feature)
+/// 
+/// SINGLE-BRANCH ARCHITECTURE: This screen is deprecated.
+/// In single-branch mode, only the default branch (id='1') is used.
+/// New branch creation and modification are disabled.
 class BranchesScreen extends StatefulWidget {
   const BranchesScreen({super.key});
 
@@ -173,13 +177,15 @@ class _BranchesScreenState extends State<BranchesScreen> {
                   } else {
                     // SINGLE-BRANCH: Creating additional branches is disabled
                     // In single-branch mode, only the default branch (id=1) is used
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Creating additional branches is disabled in single-branch mode'),
-                        backgroundColor: AppTheme.warningColor,
-                      ),
-                    );
-                    Navigator.pop(context);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Creating additional branches is disabled in single-branch mode'),
+                          backgroundColor: AppTheme.warningColor,
+                        ),
+                      );
+                      Navigator.pop(context);
+                    }
                     return;
                   }
                   
@@ -309,10 +315,18 @@ class _BranchesScreenState extends State<BranchesScreen> {
                   ],
                 ),
               ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.add),
-                label: const Text('Add Branch'),
-                onPressed: () => _showBranchDialog(),
+              // SINGLE-BRANCH: Add Branch button disabled
+              Tooltip(
+                message: 'Branch creation is disabled in single-branch mode',
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add Branch'),
+                  onPressed: null, // Disabled
+                  style: ElevatedButton.styleFrom(
+                    disabledBackgroundColor: Colors.grey.shade300,
+                    disabledForegroundColor: Colors.grey.shade600,
+                  ),
+                ),
               ),
             ],
           ),
@@ -433,6 +447,8 @@ class _BranchesScreenState extends State<BranchesScreen> {
   Widget _buildBranchTile(Branch branch) {
     final employeeCount = _employeeCounts[branch.id] ?? 0;
     final shiftCount = _shiftCounts[branch.id] ?? 0;
+    // SINGLE-BRANCH: Only allow viewing, not editing or deleting
+    final bool isEditingDisabled = true;
     
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -541,20 +557,26 @@ class _BranchesScreenState extends State<BranchesScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          IconButton(
-            icon: const Icon(Icons.edit),
-            onPressed: () => _showBranchDialog(branch: branch),
-            tooltip: 'Edit',
+          // SINGLE-BRANCH: Edit button disabled
+          Tooltip(
+            message: 'Branch editing is disabled in single-branch mode',
+            child: IconButton(
+              icon: Icon(Icons.edit, color: Colors.grey.shade400),
+              onPressed: null, // Disabled
+              tooltip: 'Edit',
+            ),
           ),
-          if (!branch.isMainBranch)
+          // SINGLE-BRANCH: Delete button removed for all branches
+          /* if (!branch.isMainBranch)
             IconButton(
               icon: const Icon(Icons.delete, color: AppTheme.errorColor),
               onPressed: () => _confirmDelete(branch),
               tooltip: 'Delete',
-            ),
+            ), */
         ],
       ),
-      onTap: () => _showBranchDialog(branch: branch),
+      // SINGLE-BRANCH: Tap to edit disabled
+      onTap: null, // Disabled
     );
   }
 }

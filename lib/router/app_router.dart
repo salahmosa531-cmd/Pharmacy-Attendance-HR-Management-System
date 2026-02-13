@@ -235,13 +235,15 @@ class AppRouter {
             ),
           ),
           
-          // Branches (kept for future multi-branch support, but hidden in single-branch mode)
-          GoRoute(
+          // SINGLE-BRANCH: Branches route disabled
+          // Branch management UI is inaccessible in single-branch mode
+          // Uncomment to enable multi-branch support in future
+          /* GoRoute(
             path: '/branches',
             pageBuilder: (context, state) => const NoTransitionPage(
               child: BranchesScreen(),
             ),
-          ),
+          ), */
           
           // =========================================
           // FINANCIAL MANAGEMENT ROUTES
