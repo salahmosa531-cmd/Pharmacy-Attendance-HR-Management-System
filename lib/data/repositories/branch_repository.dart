@@ -156,7 +156,7 @@ class BranchRepository extends BaseRepository<Branch> {
   /// @deprecated Branch deletion not allowed
   /// @throws Exception always - branch deletion not allowed
   @override
-  Future<void> delete(String id) async {
+  Future<int> delete(String id) async {
     throw Exception('Branch deletion is disabled in single-branch mode. The default branch cannot be deleted.');
   }
   
@@ -164,7 +164,7 @@ class BranchRepository extends BaseRepository<Branch> {
   /// @deprecated Bulk operations not allowed
   /// @throws Exception always
   @override
-  Future<void> deleteAll() async {
+  Future<int> deleteAll() async {
     throw Exception('Branch deletion is disabled in single-branch mode.');
   }
 }
