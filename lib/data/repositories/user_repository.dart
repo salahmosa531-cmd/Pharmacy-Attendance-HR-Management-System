@@ -146,4 +146,30 @@ class UserRepository extends BaseRepository<User> {
       orderBy: 'username ASC',
     );
   }
+  
+  /// Update employee link for a user
+  /// 
+  /// SINGLE-BRANCH ARCHITECTURE: Links user to employee
+  Future<void> updateEmployeeLink(String userId, String employeeId) async {
+    final db = await database;
+    await db.update(
+      tableName,
+      {
+        'employee_id': employeeId,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [userId],
+    );
+  }
+  
+  /// Get users without employee links
+  /// 
+  /// Used for migration to ensure all users have employees
+  Future<List<User>> getUsersWithoutEmployees() async {
+    return await getAll(
+      where: 'employee_id IS NULL AND is_active = 1',
+      orderBy: 'created_at ASC',
+    );
+  }
 }

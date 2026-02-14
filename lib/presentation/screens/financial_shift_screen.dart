@@ -8,6 +8,7 @@ import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
 import '../../data/repositories/employee_repository.dart';
+import '../widgets/purchase_payment_entry_dialog.dart';
 
 /// Financial Shift Management Screen
 /// 
@@ -308,6 +309,53 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     );
   }
 
+  /// Record a quick purchase payment (Phase 4)
+  /// 
+  /// Opens a lightweight dialog for recording payments to suppliers
+  /// without navigating to the full Suppliers screen.
+  Future<void> _recordPurchasePayment() async {
+    if (_currentShift == null) return;
+    
+    final result = await PurchasePaymentEntryDialog.show(
+      context,
+      financialShiftId: _currentShift!.id,
+    );
+    
+    if (result == null) return;
+    
+    setState(() => _isLoading = true);
+    
+    try {
+      // Record as an expense with 'supplies' category
+      await _financialService.recordExpense(
+        financialShiftId: _currentShift!.id,
+        amount: result['amount'] as double,
+        category: result['category'] as ExpenseCategory,
+        description: result['description'] as String,
+        receiptNumber: result['invoiceNumber'] as String?,
+        recordedBy: _currentShift!.employeeId,
+      );
+      
+      await _refreshShiftData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Purchase payment recorded'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error recording payment: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+    
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+  
   Future<void> _recordExpense() async {
     if (_currentShift == null) return;
     
@@ -1120,19 +1168,32 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   Widget _buildExpensesTab() {
     return Column(
       children: [
-        // Add Expense Button
+        // Action Buttons Row
         Padding(
           padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _recordExpense,
-              icon: const Icon(Icons.add),
-              label: const Text('Record Expense'),
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.red,
+          child: Row(
+            children: [
+              // Purchase Payment Button (Phase 4)
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: _recordPurchasePayment,
+                  icon: const Icon(Icons.payment),
+                  label: const Text('Purchase Payment'),
+                ),
               ),
-            ),
+              const SizedBox(width: 12),
+              // Regular Expense Button
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _recordExpense,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Other Expense'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.red,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
         

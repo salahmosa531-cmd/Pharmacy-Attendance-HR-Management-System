@@ -383,6 +383,46 @@ class SupplierService {
     }
     return total;
   }
+  
+  // =========================================================================
+  // QUICK PAYMENT OPERATIONS (PHASE 4)
+  // =========================================================================
+  
+  /// Record a quick payment without selecting specific supplier
+  /// 
+  /// This is used during shift closing to record cash payments made to suppliers
+  /// without the full supplier selection flow. The payment is tracked but may
+  /// need to be reconciled later.
+  /// 
+  /// For a generic payment, pass supplierId as null and provide notes for context.
+  Future<SupplierTransaction?> recordQuickPayment({
+    String? supplierId,
+    required double amount,
+    String? paymentMethod,
+    String? invoiceNumber,
+    String? notes,
+    String? recordedBy,
+  }) async {
+    // If no supplier specified, log warning and return null
+    // The payment should still be tracked via shift expenses
+    if (supplierId == null) {
+      LoggingService.instance.warning(
+        'SupplierService',
+        'Quick payment recorded without supplier: amount=$amount, notes=$notes',
+      );
+      return null;
+    }
+    
+    // Use existing recordPayment method
+    return recordPayment(
+      supplierId: supplierId,
+      amount: amount,
+      paymentMethod: paymentMethod,
+      referenceNumber: invoiceNumber,
+      notes: notes,
+      recordedBy: recordedBy,
+    );
+  }
 }
 
 /// Summary of a supplier with financial data

@@ -11,6 +11,7 @@ export 'diagnostic_service.dart';
 export 'license_service.dart';
 export 'settings_service.dart';
 export 'logging_service.dart';
+export 'employee_resolver_service.dart';
 
 // Financial Management services
 export 'financial_service.dart';

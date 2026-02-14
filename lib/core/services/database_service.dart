@@ -679,6 +679,14 @@ class DatabaseService {
       await _migrateToV3(db);
     }
     
+    // Migration v3 -> v4: Employee-User integrity enhancements
+    // This migration runs for all databases to ensure:
+    // 1. Users without employees get employees provisioned
+    // 2. User-Employee relationships are properly established
+    // Note: SQLite doesn't support ALTER TABLE ADD CONSTRAINT for UNIQUE
+    // The unique constraint is enforced at application level via EmployeeResolverService
+    await _migrateEmployeeUserIntegrity(db);
+    
     // SINGLE-BRANCH ARCHITECTURE: Ensure default branch exists for all upgrades
     await _ensureDefaultBranch(db);
     
@@ -860,6 +868,52 @@ class DatabaseService {
     await _safeCreateIndex(db, 'idx_supplier_transactions_type', 'supplier_transactions', 'transaction_type');
     
     _logMigration('v3 migration completed: Financial Management System tables created');
+  }
+  
+  /// Migration for Employee-User integrity
+  /// 
+  /// SINGLE-BRANCH ARCHITECTURE: Ensures all users have employee records
+  /// This migration:
+  /// 1. Finds users without employee links
+  /// 2. Creates employee records for them
+  /// 3. Links employees to users
+  /// 
+  /// Note: Actual provisioning is done via EmployeeResolverService at runtime
+  /// This migration only ensures the database structure supports the relationship
+  Future<void> _migrateEmployeeUserIntegrity(Database db) async {
+    _logMigration('Starting Employee-User integrity migration');
+    
+    // Ensure employees.branch_id has default value '1'
+    // SQLite doesn't support ALTER TABLE to modify default, but new rows will use the default
+    // Existing rows should already have branch_id set
+    
+    // Update any employees with NULL branch_id to use default branch
+    final nullBranchEmployees = await db.rawQuery(
+      "SELECT COUNT(*) as count FROM employees WHERE branch_id IS NULL",
+    );
+    final nullCount = nullBranchEmployees.first['count'] as int? ?? 0;
+    
+    if (nullCount > 0) {
+      _logMigration('Found $nullCount employees with NULL branch_id, setting to default branch');
+      await db.rawUpdate(
+        "UPDATE employees SET branch_id = '1' WHERE branch_id IS NULL",
+      );
+    }
+    
+    // Create index on users.employee_id for faster lookups
+    await _safeCreateIndex(db, 'idx_users_employee_id', 'users', 'employee_id');
+    
+    // Log users without employees (will be provisioned at runtime)
+    final usersWithoutEmployees = await db.rawQuery(
+      "SELECT COUNT(*) as count FROM users WHERE employee_id IS NULL AND is_active = 1",
+    );
+    final orphanCount = usersWithoutEmployees.first['count'] as int? ?? 0;
+    
+    if (orphanCount > 0) {
+      _logMigration('[INFO] Found $orphanCount active users without employee links - will be provisioned at runtime via EmployeeResolverService');
+    }
+    
+    _logMigration('Employee-User integrity migration completed');
   }
   
   /// Check if a table exists

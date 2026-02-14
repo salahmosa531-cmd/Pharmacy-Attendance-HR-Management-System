@@ -23,7 +23,8 @@ import '../core/security/route_permissions.dart';
 import '../presentation/screens/financial_dashboard_screen.dart';
 import '../presentation/screens/financial_shift_screen.dart';
 import '../presentation/screens/financial_reports_screen.dart';
-import '../presentation/screens/suppliers_screen.dart';
+// PHASE 1: Suppliers UI removed - data layer retained for FK safety
+// import '../presentation/screens/suppliers_screen.dart';
 
 
 /// Application router configuration
@@ -66,7 +67,9 @@ class AppRouter {
                           currentPath.startsWith('/branches') ||
                           currentPath.startsWith('/attendance') ||
                           currentPath.startsWith('/financial') ||
-                          currentPath.startsWith('/suppliers');
+                          currentPath.startsWith('/financial');
+                          // PHASE 1: Suppliers UI removed
+                          // currentPath.startsWith('/suppliers');
       
       // Log navigation attempt
       final logger = LoggingService.instance;
@@ -273,13 +276,14 @@ class AppRouter {
             ),
           ),
           
-          // Supplier Management
-          GoRoute(
+          // PHASE 1: Suppliers UI removed - data layer retained for FK safety
+          // Supplier table and transactions remain for existing data and FKs
+          /* GoRoute(
             path: '/suppliers',
             pageBuilder: (context, state) => const NoTransitionPage(
               child: SuppliersScreen(),
             ),
-          ),
+          ), */
         ],
       ),
     ],
