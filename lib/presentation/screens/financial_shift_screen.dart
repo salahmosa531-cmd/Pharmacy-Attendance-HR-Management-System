@@ -3,10 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../core/services/financial_service.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/employee_resolver_service.dart';
+import '../../core/services/logging_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
+import '../../data/models/employee_model.dart';
 import '../../data/repositories/employee_repository.dart';
 import '../widgets/purchase_payment_entry_dialog.dart';
 
@@ -27,16 +30,19 @@ class FinancialShiftScreen extends StatefulWidget {
 class _FinancialShiftScreenState extends State<FinancialShiftScreen> with SingleTickerProviderStateMixin {
   final _financialService = FinancialService.instance;
   final _authService = AuthService.instance;
+  final _employeeResolver = EmployeeResolverService.instance;
   final _employeeRepo = EmployeeRepository.instance;
   
   late TabController _tabController;
   
   bool _isLoading = true;
+  String? _loadError; // Track loading errors
   FinancialShift? _currentShift;
   ShiftSummary? _shiftSummary;
   List<ShiftSale> _sales = [];
   List<ShiftExpense> _expenses = [];
   String? _employeeName;
+  Employee? _resolvedEmployee; // Resolved employee for the current user
   
   final _currencyFormat = NumberFormat.currency(symbol: 'EGP ', decimalDigits: 2);
   final _timeFormat = DateFormat('hh:mm a');
@@ -56,36 +62,57 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   }
 
   Future<void> _loadCurrentShift() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
     
     try {
       final currentUser = _authService.currentUser;
       
-      // SINGLE-BRANCH: Load shift for current employee
-      if (currentUser?.employeeId != null) {
-        _currentShift = await _financialService.getOpenShiftForEmployee(currentUser!.employeeId!);
+      if (currentUser == null) {
+        throw Exception('Not logged in');
+      }
+      
+      // EMPLOYEE RESOLUTION: Ensure user has an employee via resolver
+      // This removes "NO_CONTEXT" errors by guaranteeing employee existence
+      try {
+        _resolvedEmployee = await _employeeResolver.getEmployeeForUser(currentUser);
+        LoggingService.instance.info(
+          'FinancialShift',
+          '[EMPLOYEE_RESOLVED] Resolved employee ${_resolvedEmployee!.id} for user ${currentUser.username}',
+        );
+      } catch (e) {
+        LoggingService.instance.error(
+          'FinancialShift',
+          'Failed to resolve employee for user ${currentUser.username}',
+          e,
+          StackTrace.current,
+        );
+        // Don't throw - allow screen to show "no employee" state
+        _resolvedEmployee = null;
+      }
+      
+      // SINGLE-BRANCH: Load shift for resolved employee
+      if (_resolvedEmployee != null) {
+        _currentShift = await _financialService.getOpenShiftForEmployee(_resolvedEmployee!.id);
         
         if (_currentShift != null) {
           _shiftSummary = await _financialService.getShiftSummary(_currentShift!.id);
           _sales = await _financialService.getSalesForShift(_currentShift!.id);
           _expenses = await _financialService.getExpensesForShift(_currentShift!.id);
-          
-          // Get employee name
-          final employee = await _employeeRepo.getById(_currentShift!.employeeId);
-          _employeeName = employee?.fullName;
+          _employeeName = _resolvedEmployee!.fullName;
         }
       }
     } on FinancialException catch (e) {
+      LoggingService.instance.error('FinancialShift', 'FinancialException loading shift', e, StackTrace.current);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.message}'), backgroundColor: Colors.red),
-        );
+        setState(() => _loadError = 'Error: ${e.message}');
       }
     } catch (e) {
+      LoggingService.instance.error('FinancialShift', 'Error loading shift', e, StackTrace.current);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading shift: $e'), backgroundColor: Colors.red),
-        );
+        setState(() => _loadError = 'Error loading shift: $e');
       }
     }
     
@@ -101,15 +128,23 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     setState(() => _isLoading = true);
     
     try {
-      final currentUser = _authService.currentUser;
+      // Use resolved employee instead of user.employeeId
+      // This guarantees employee exists (only DB errors can cause failure)
+      if (_resolvedEmployee == null) {
+        // Try to resolve again
+        final currentUser = _authService.currentUser;
+        if (currentUser != null) {
+          _resolvedEmployee = await _employeeResolver.getEmployeeForUser(currentUser);
+        }
+      }
       
-      if (currentUser?.employeeId == null) {
-        throw FinancialException('No employee context', code: 'NO_CONTEXT');
+      if (_resolvedEmployee == null) {
+        throw FinancialException('Could not resolve employee profile', code: 'EMPLOYEE_RESOLUTION_FAILED');
       }
       
       // SINGLE-BRANCH: openShift handles branch internally
       _currentShift = await _financialService.openShift(
-        employeeId: currentUser!.employeeId!,
+        employeeId: _resolvedEmployee!.id,
         openingCash: openingCash,
       );
       
@@ -117,8 +152,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       _sales = [];
       _expenses = [];
       
-      final employee = await _employeeRepo.getById(_currentShift!.employeeId);
-      _employeeName = employee?.fullName;
+      _employeeName = _resolvedEmployee?.fullName;
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -751,14 +785,59 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : _currentShift == null
-              ? _buildNoShiftView()
-              : _buildShiftView(),
+          : _loadError != null
+              ? _buildErrorView()
+              : _currentShift == null
+                  ? _buildNoShiftView()
+                  : _buildShiftView(),
+    );
+  }
+  
+  /// Build error view with retry option
+  Widget _buildErrorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(40),
+              ),
+              child: const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Error Loading Shift',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _loadError!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: _loadCurrentShift,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   /// Check if current user has valid employee context
-  bool get _hasEmployeeContext => _authService.currentUser?.employeeId != null;
+  /// Uses resolved employee instead of just checking user.employeeId
+  bool get _hasEmployeeContext => _resolvedEmployee != null;
   
   Widget _buildNoShiftView() {
     // Guard: Check if user has employee context

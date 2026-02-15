@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/theme/app_theme.dart';
@@ -21,6 +22,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final AuthService _authService = AuthService.instance;
   
   bool _isLoading = true;
+  String? _loadError;
   Map<String, dynamic> _summary = {};
   List<Map<String, dynamic>> _currentlyWorking = [];
   List<Map<String, dynamic>> _lateArrivals = [];
@@ -61,8 +63,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      LoggingService.instance.error('Dashboard', 'Failed to load dashboard data', e, StackTrace.current);
       if (!mounted) return;
-      setState(() => _isLoading = false);
+      setState(() {
+        _isLoading = false;
+        _loadError = 'Failed to load dashboard data. Please try again.';
+      });
     }
   }
   
@@ -72,7 +78,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       onRefresh: _loadDashboardData,
       child: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
+          : _loadError != null
+              ? _buildErrorView()
+              : SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -153,23 +161,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         
-        // Quick actions
+        // Quick actions - linked to real navigation/actions
         Row(
           children: [
             _buildQuickActionButton(
               icon: Icons.qr_code,
-              label: 'QR Code',
-              onTap: () {
-                // TODO: Show QR code for attendance
-              },
+              label: 'Attendance',
+              onTap: () => context.go('/attendance'),
             ),
             const SizedBox(width: 12),
             _buildQuickActionButton(
               icon: Icons.person_add,
               label: 'Add Employee',
-              onTap: () {
-                // TODO: Navigate to add employee
-              },
+              onTap: () => context.go('/employees/new'),
             ),
           ],
         ),
@@ -725,5 +729,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (hour < 12) return 'Good morning';
     if (hour < 17) return 'Good afternoon';
     return 'Good evening';
+  }
+  
+  /// Build error view with retry option
+  Widget _buildErrorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: AppTheme.errorColor),
+            const SizedBox(height: 16),
+            Text(
+              _loadError!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppTheme.errorColor),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () {
+                setState(() {
+                  _loadError = null;
+                  _isLoading = true;
+                });
+                _loadDashboardData();
+              },
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
