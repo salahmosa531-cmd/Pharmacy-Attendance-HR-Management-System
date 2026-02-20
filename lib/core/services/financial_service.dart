@@ -7,7 +7,10 @@ import '../../data/repositories/financial_shift_repository.dart';
 import '../../data/repositories/shift_sale_repository.dart';
 import '../../data/repositories/shift_expense_repository.dart';
 import '../../data/repositories/shift_closure_repository.dart';
+import '../../data/repositories/supplier_transaction_repository.dart';
+import '../../data/models/supplier_transaction_model.dart';
 import 'logging_service.dart';
+import 'employee_resolver_service.dart';
 
 /// Financial Service - Orchestrates all shift-level financial operations
 /// 
@@ -27,6 +30,8 @@ class FinancialService {
   final _shiftSaleRepo = ShiftSaleRepository.instance;
   final _shiftExpenseRepo = ShiftExpenseRepository.instance;
   final _shiftClosureRepo = ShiftClosureRepository.instance;
+  final _supplierTransactionRepo = SupplierTransactionRepository.instance;
+  final _employeeResolver = EmployeeResolverService.instance;
   final _uuid = const Uuid();
   
   FinancialService._();
@@ -390,6 +395,113 @@ class FinancialService {
   Future<List<FinancialShift>> getRecentClosedShifts({int limit = 50}) async {
     return _financialShiftRepo.getByBranch(openOnly: false, limit: limit);
   }
+
+  // =========================================================================
+  // SHIFT CASH FLOW INTEGRATION (PHASE 3)
+  // =========================================================================
+  
+  /// Get cash sales for a shift (cash-in component)
+  /// 
+  /// Returns the total cash sales amount for the shift.
+  /// Used in shift closing cash reconciliation.
+  Future<double> getShiftSalesCash(String financialShiftId) async {
+    final salesByMethod = await getSalesBreakdown(financialShiftId);
+    return salesByMethod[PaymentMethod.cash] ?? 0;
+  }
+  
+  /// Get total expenses for a shift (cash-out component)
+  /// 
+  /// Returns the total expenses amount for the shift.
+  /// Used in shift closing cash reconciliation.
+  Future<double> getShiftExpenses(String financialShiftId) async {
+    return getTotalExpensesForShift(financialShiftId);
+  }
+  
+  /// Get purchase payments made during a shift period (cash-out component)
+  /// 
+  /// Returns supplier payments (cash-out) recorded during the shift's time period.
+  /// These are payments to suppliers for purchases.
+  /// 
+  /// Note: This queries supplier_transactions for payments made during
+  /// the shift's open period (opened_at to closed_at or now).
+  Future<double> getShiftPurchasePayments(String financialShiftId) async {
+    final shift = await _financialShiftRepo.getById(financialShiftId);
+    if (shift == null) {
+      return 0;
+    }
+    
+    final startTime = shift.openedAt;
+    final endTime = shift.closedAt ?? DateTime.now();
+    
+    // Get supplier payments during shift period
+    final payments = await _supplierTransactionRepo.getByDateRange(
+      startTime,
+      endTime,
+    );
+    
+    // Sum only payment transactions (cash-out to suppliers)
+    return payments
+        .where((tx) => tx.transactionType == SupplierTransactionType.payment)
+        .fold(0.0, (sum, tx) => sum + tx.amount);
+  }
+  
+  /// Get debt collection payments received during a shift period (cash-in component)
+  /// 
+  /// Returns credit sales payments received from customers during the shift period.
+  /// In pharmacy context, this could be insurance reimbursements or credit account payments.
+  /// 
+  /// Note: Currently returns 0 as credit collection is not implemented.
+  /// This is a placeholder for future integration.
+  Future<double> getShiftDebtPaymentsReceived(String financialShiftId) async {
+    // TODO: Implement when credit/debt collection feature is added
+    // This would track:
+    // - Insurance reimbursements received
+    // - Credit account payments from customers
+    // - Instalment payments received
+    return 0;
+  }
+  
+  /// Get comprehensive shift cash flow summary
+  /// 
+  /// Returns a breakdown of all cash movements during the shift:
+  /// - Cash In: Opening cash + Cash sales + Debt payments received
+  /// - Cash Out: Expenses + Purchase payments to suppliers
+  /// - Expected Cash: Cash In - Cash Out
+  Future<ShiftCashFlowSummary> getShiftCashFlowSummary(String financialShiftId) async {
+    final shift = await _financialShiftRepo.getById(financialShiftId);
+    if (shift == null) {
+      throw FinancialException(
+        'Financial shift not found',
+        code: 'SHIFT_NOT_FOUND',
+      );
+    }
+    
+    // Cash In components
+    final openingCash = shift.openingCash;
+    final cashSales = await getShiftSalesCash(financialShiftId);
+    final debtPaymentsReceived = await getShiftDebtPaymentsReceived(financialShiftId);
+    
+    // Cash Out components
+    final expenses = await getShiftExpenses(financialShiftId);
+    final purchasePayments = await getShiftPurchasePayments(financialShiftId);
+    
+    // Calculate totals
+    final totalCashIn = openingCash + cashSales + debtPaymentsReceived;
+    final totalCashOut = expenses + purchasePayments;
+    final expectedCash = totalCashIn - totalCashOut;
+    
+    return ShiftCashFlowSummary(
+      financialShiftId: financialShiftId,
+      openingCash: openingCash,
+      cashSales: cashSales,
+      debtPaymentsReceived: debtPaymentsReceived,
+      totalCashIn: totalCashIn,
+      expenses: expenses,
+      purchasePayments: purchasePayments,
+      totalCashOut: totalCashOut,
+      expectedCash: expectedCash,
+    );
+  }
 }
 
 /// Summary of a financial shift (for display)
@@ -425,6 +537,51 @@ class ShiftSummary {
 
   /// Wallet sales only
   double get walletSales => salesByMethod[PaymentMethod.wallet] ?? 0;
+}
+
+/// Comprehensive cash flow summary for a shift
+/// 
+/// Breaks down all cash movements:
+/// - Cash In: Opening cash + Cash sales + Debt payments received
+/// - Cash Out: Expenses + Purchase payments to suppliers
+/// - Expected Cash: Cash In - Cash Out
+class ShiftCashFlowSummary {
+  final String financialShiftId;
+  
+  // Cash In components
+  final double openingCash;
+  final double cashSales;
+  final double debtPaymentsReceived;
+  final double totalCashIn;
+  
+  // Cash Out components
+  final double expenses;
+  final double purchasePayments;
+  final double totalCashOut;
+  
+  // Result
+  final double expectedCash;
+  
+  ShiftCashFlowSummary({
+    required this.financialShiftId,
+    required this.openingCash,
+    required this.cashSales,
+    required this.debtPaymentsReceived,
+    required this.totalCashIn,
+    required this.expenses,
+    required this.purchasePayments,
+    required this.totalCashOut,
+    required this.expectedCash,
+  });
+  
+  /// Net cash flow for the shift period
+  double get netCashFlow => totalCashIn - openingCash - totalCashOut;
+  
+  /// Whether the shift has any purchase payments
+  bool get hasPurchasePayments => purchasePayments > 0;
+  
+  /// Whether the shift has any debt payments received
+  bool get hasDebtPaymentsReceived => debtPaymentsReceived > 0;
 }
 
 /// Exception for financial operations

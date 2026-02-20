@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import '../../core/theme/app_theme.dart';
 import '../../core/services/services.dart';
+import '../../core/services/settings_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/attendance_model.dart';
 import '../../data/repositories/repositories.dart';
@@ -15,9 +16,10 @@ class AttendanceScreen extends StatefulWidget {
   State<AttendanceScreen> createState() => _AttendanceScreenState();
 }
 
-class _AttendanceScreenState extends State<AttendanceScreen> {
+class _AttendanceScreenState extends State<AttendanceScreen> with WidgetsBindingObserver {
   final AttendanceService _attendanceService = AttendanceService.instance;
   final QrService _qrService = QrService.instance;
+  final SettingsService _settingsService = SettingsService.instance;
   final TextEditingController _codeController = TextEditingController();
   final FocusNode _codeFocusNode = FocusNode();
   
@@ -30,15 +32,88 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   int _qrSecondsRemaining = 0;
   String? _qrErrorMessage;
   
+  // Settings state - reactive to changes
+  StreamSubscription<SettingsState>? _settingsSubscription;
+  SettingsState _settings = const SettingsState();
+  int _previousQrRefreshSeconds = 0;
+  
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initializeSettings();
     _codeFocusNode.requestFocus();
-    _generateQrCode();
+  }
+  
+  /// Initialize and subscribe to settings
+  Future<void> _initializeSettings() async {
+    // Load current settings (always fresh from DB)
+    await _settingsService.initialize();
+    _settings = _settingsService.currentState;
+    _previousQrRefreshSeconds = _settings.qrRefreshSeconds;
+    
+    // Subscribe to settings changes
+    _settingsSubscription = _settingsService.settingsStream.listen(_handleSettingsChange);
+    
+    // Generate QR only if enabled
+    if (_settings.allowQrEntry) {
+      _generateQrCode();
+    }
+    
+    if (mounted) setState(() {});
+  }
+  
+  /// Handle settings changes - rebuild timers as needed
+  void _handleSettingsChange(SettingsState newSettings) {
+    final oldSettings = _settings;
+    
+    // Check if QR entry was enabled/disabled
+    if (newSettings.allowQrEntry != oldSettings.allowQrEntry) {
+      if (newSettings.allowQrEntry) {
+        LoggingService.instance.info('AttendanceScreen', '[QR_ENABLED] Starting QR generation');
+        _generateQrCode();
+      } else {
+        LoggingService.instance.info('AttendanceScreen', '[QR_DISABLED] Stopping QR timer');
+        _qrTimer?.cancel();
+        _qrTimer = null;
+        if (mounted) {
+          setState(() {
+            _qrCode = null;
+            _qrSecondsRemaining = 0;
+          });
+        }
+      }
+    }
+    
+    // Check if QR refresh interval changed
+    if (newSettings.qrRefreshSeconds != _previousQrRefreshSeconds && newSettings.allowQrEntry) {
+      LoggingService.instance.info(
+        'AttendanceScreen',
+        '[QR_INTERVAL_CHANGED] From $_previousQrRefreshSeconds to ${newSettings.qrRefreshSeconds}s'
+      );
+      _previousQrRefreshSeconds = newSettings.qrRefreshSeconds;
+      _qrTimer?.cancel();
+      _generateQrCode();
+    }
+    
+    if (mounted) {
+      setState(() => _settings = newSettings);
+    }
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Reload settings when app comes to foreground
+      LoggingService.instance.info('AttendanceScreen', '[APP_RESUMED] Reloading settings');
+      _settingsService.reloadSettings();
+    }
   }
   
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _settingsSubscription?.cancel();
     _codeController.dispose();
     _codeFocusNode.dispose();
     _qrTimer?.cancel();
@@ -46,16 +121,30 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
   
   Future<void> _generateQrCode() async {
+    // Don't generate if QR entry is disabled
+    if (!_settings.allowQrEntry) {
+      return;
+    }
+    
     try {
       final data = await _qrService.generateQrDisplayData();
-      setState(() {
-        _qrCode = data['token'] as String?;
-        _qrSecondsRemaining = AppConstants.qrRefreshSeconds;
-        _qrErrorMessage = null;
-      });
+      // Use current settings for refresh interval (not cached AppConstants)
+      final refreshSeconds = _settings.qrRefreshSeconds;
+      
+      if (mounted) {
+        setState(() {
+          _qrCode = data['token'] as String?;
+          _qrSecondsRemaining = refreshSeconds;
+          _qrErrorMessage = null;
+        });
+      }
       
       _qrTimer?.cancel();
       _qrTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
         if (_qrSecondsRemaining > 0) {
           setState(() => _qrSecondsRemaining--);
         } else {
@@ -64,10 +153,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       });
     } catch (e, stack) {
       LoggingService.instance.error('AttendanceScreen', 'Failed to generate QR code', e, stack);
-      setState(() {
-        _qrCode = null;
-        _qrErrorMessage = 'Unable to generate QR code.';
-      });
+      if (mounted) {
+        setState(() {
+          _qrCode = null;
+          _qrErrorMessage = 'Unable to generate QR code.';
+        });
+      }
     }
   }
   
@@ -345,7 +436,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         const SizedBox(height: 16),
                         
                         LinearProgressIndicator(
-                          value: _qrSecondsRemaining / AppConstants.qrRefreshSeconds,
+                          value: _settings.qrRefreshSeconds > 0 
+                              ? _qrSecondsRemaining / _settings.qrRefreshSeconds 
+                              : 0,
                           backgroundColor: AppTheme.dividerColor,
                           valueColor: AlwaysStoppedAnimation(
                             _qrSecondsRemaining < 10 ? AppTheme.warningColor : AppTheme.primaryColor,
@@ -380,22 +473,39 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-                        _buildMethodTile(
-                          icon: Icons.camera_alt,
-                          title: 'Camera Scanner',
-                          subtitle: 'Scan QR with laptop camera',
-                          onTap: () {
-                            // TODO: Open camera scanner
-                          },
-                        ),
-                        _buildMethodTile(
-                          icon: Icons.fingerprint,
-                          title: 'Fingerprint',
-                          subtitle: 'Use fingerprint device',
-                          onTap: () {
-                            // TODO: Open fingerprint scanner
-                          },
-                        ),
+                        // Only show methods that are enabled in settings
+                        if (_settings.allowQrEntry)
+                          _buildMethodTile(
+                            icon: Icons.camera_alt,
+                            title: 'Camera Scanner',
+                            subtitle: 'Scan QR with laptop camera',
+                            onTap: () {
+                              // TODO: Open camera scanner
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Camera scanner not yet implemented')),
+                              );
+                            },
+                          ),
+                        if (_settings.allowFingerprintEntry)
+                          _buildMethodTile(
+                            icon: Icons.fingerprint,
+                            title: 'Fingerprint',
+                            subtitle: 'Use fingerprint device',
+                            onTap: () {
+                              // TODO: Open fingerprint scanner
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Fingerprint scanner not yet implemented')),
+                              );
+                            },
+                          ),
+                        if (!_settings.allowQrEntry && !_settings.allowFingerprintEntry)
+                          const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'No additional methods enabled. Configure in Settings.',
+                              style: TextStyle(color: AppTheme.textSecondary),
+                            ),
+                          ),
                       ],
                     ),
                   ),

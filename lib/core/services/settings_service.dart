@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'package:flutter/widgets.dart';
 import 'package:uuid/uuid.dart';
 import '../constants/app_constants.dart';
 import 'database_service.dart';
+import 'logging_service.dart';
 
 /// Central Settings Manager with stream-based reactive updates
 /// 
@@ -27,8 +29,14 @@ class SettingsService {
   // Current settings state
   SettingsState _currentState = SettingsState();
   
-  // Cache for quick access
+  // Cache for quick access (NOTE: Cache is rebuilt from DB on each initialize())
   final Map<String, dynamic> _cache = {};
+  
+  // Track if initialized
+  bool _isInitialized = false;
+  
+  // App lifecycle observer for foreground detection
+  _SettingsLifecycleObserver? _lifecycleObserver;
   
   SettingsService._();
   
@@ -44,8 +52,44 @@ class SettingsService {
   SettingsState get currentState => _currentState;
   
   /// Initialize settings from database
+  /// 
+  /// Settings Sync Strategy (Admin ↔ Kiosk):
+  /// - Single source of truth: SQLite database
+  /// - On initialize: Always load fresh from database (no stale cache)
+  /// - On setValue: Persist immediately + reload state + notify listeners
+  /// - On app resume: Reload settings to catch changes from other sessions
   Future<void> initialize([String? branchId]) async {
+    LoggingService.instance.info('SettingsService', '[SETTINGS_INIT] Loading settings from database');
     await _loadAllSettings(branchId ?? _branchId);
+    _notifyListeners();
+    _isInitialized = true;
+    
+    // Register lifecycle observer if not already registered
+    _registerLifecycleObserver();
+  }
+  
+  /// Register app lifecycle observer to reload settings on foreground
+  void _registerLifecycleObserver() {
+    if (_lifecycleObserver != null) return;
+    
+    _lifecycleObserver = _SettingsLifecycleObserver(() async {
+      LoggingService.instance.info('SettingsService', '[SETTINGS_FOREGROUND] App resumed, reloading settings');
+      await reloadSettings();
+    });
+    
+    WidgetsBinding.instance.addObserver(_lifecycleObserver!);
+  }
+  
+  /// Force reload settings from database
+  /// 
+  /// Call this when:
+  /// - App comes to foreground
+  /// - Another session may have changed settings
+  /// - After sync operations
+  Future<void> reloadSettings() async {
+    if (!_isInitialized) return;
+    LoggingService.instance.info('SettingsService', '[SETTINGS_RELOAD] Forcing settings reload from database');
+    await _loadAllSettings(_branchId);
     _notifyListeners();
   }
   
@@ -198,7 +242,8 @@ class SettingsService {
     // Update cache
     _cache[key] = value;
     
-    // Reload state and notify
+    // Reload state and notify all listeners
+    LoggingService.instance.info('SettingsService', '[SETTINGS_CHANGED] Key: $key, Value: $value');
     await _loadAllSettings(_branchId);
     _notifyListeners();
   }
@@ -251,6 +296,25 @@ class SettingsService {
   /// Dispose resources
   void dispose() {
     _settingsController.close();
+    if (_lifecycleObserver != null) {
+      WidgetsBinding.instance.removeObserver(_lifecycleObserver!);
+      _lifecycleObserver = null;
+    }
+    _isInitialized = false;
+  }
+}
+
+/// Lifecycle observer for reloading settings on app resume
+class _SettingsLifecycleObserver extends WidgetsBindingObserver {
+  final Future<void> Function() onResume;
+  
+  _SettingsLifecycleObserver(this.onResume);
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      onResume();
+    }
   }
 }
 

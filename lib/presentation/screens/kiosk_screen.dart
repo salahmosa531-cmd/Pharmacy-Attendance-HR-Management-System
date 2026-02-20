@@ -59,6 +59,9 @@ class _KioskScreenState extends State<KioskScreen> {
   StreamSubscription<SettingsState>? _settingsSubscription;
   SettingsState _settings = const SettingsState();
   
+  // Track previous settings for detecting changes that need timer rebuild
+  int _previousQrRefreshSeconds = 0;
+  
   // Single-branch mode: no branch context subscription needed
   bool _isBranchInitialized = false;
   
@@ -93,10 +96,10 @@ class _KioskScreenState extends State<KioskScreen> {
     await _settingsService.initialize();
     _settings = _settingsService.currentState;
 
-    // Subscribe to settings changes
+    // Subscribe to settings changes with intelligent timer rebuild
     _settingsSubscription ??= _settingsService.settingsStream.listen((state) {
       if (mounted) {
-        setState(() => _settings = state);
+        _handleSettingsChange(state);
       }
     });
 
@@ -107,9 +110,17 @@ class _KioskScreenState extends State<KioskScreen> {
       }
     });
 
+    // Track initial QR refresh interval
+    _previousQrRefreshSeconds = _settings.qrRefreshSeconds;
+    
     // Generate QR code if enabled
     if (_settings.allowQrEntry) {
       await _generateQrCode();
+    } else {
+      // Stop QR timer if QR entry is disabled
+      _qrTimer?.cancel();
+      _qrTimer = null;
+      _qrCode = null;
     }
 
     // Load recent records
@@ -120,6 +131,45 @@ class _KioskScreenState extends State<KioskScreen> {
 
     if (mounted) {
       setState(() {});
+    }
+  }
+  
+  /// Handle settings changes and rebuild timers as needed
+  void _handleSettingsChange(SettingsState newSettings) {
+    final oldSettings = _settings;
+    
+    setState(() => _settings = newSettings);
+    
+    // Check if QR entry was enabled/disabled
+    if (newSettings.allowQrEntry != oldSettings.allowQrEntry) {
+      if (newSettings.allowQrEntry) {
+        // QR entry enabled - start generating QR codes
+        LoggingService.instance.info('Kiosk', '[BARCODE_ENABLED] QR entry enabled, starting QR timer');
+        _generateQrCode();
+      } else {
+        // QR entry disabled - stop timer and hide UI
+        LoggingService.instance.info('Kiosk', '[BARCODE_DISABLED] QR entry disabled, stopping QR timer');
+        _qrTimer?.cancel();
+        _qrTimer = null;
+        if (mounted) {
+          setState(() {
+            _qrCode = null;
+            _qrSecondsRemaining = 0;
+          });
+        }
+      }
+    }
+    
+    // Check if QR refresh interval changed - rebuild timer
+    if (newSettings.qrRefreshSeconds != _previousQrRefreshSeconds && newSettings.allowQrEntry) {
+      LoggingService.instance.info(
+        'Kiosk', 
+        '[BARCODE_INTERVAL_CHANGED] QR refresh interval changed from $_previousQrRefreshSeconds to ${newSettings.qrRefreshSeconds}s, rebuilding timer'
+      );
+      _previousQrRefreshSeconds = newSettings.qrRefreshSeconds;
+      // Rebuild QR timer with new interval
+      _qrTimer?.cancel();
+      _generateQrCode();
     }
   }
   

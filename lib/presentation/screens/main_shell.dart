@@ -38,7 +38,8 @@ class _MainShellState extends State<MainShell> {
     if (location.startsWith('/financial-dashboard')) return 9;
     if (location.startsWith('/financial-shift')) return 10;
     if (location.startsWith('/financial-reports')) return 11;
-    if (location.startsWith('/suppliers')) return 12;
+    // PHASE 1: Suppliers UI removed
+    // if (location.startsWith('/suppliers')) return 12;
     
     return 0;
   }
@@ -82,9 +83,10 @@ class _MainShellState extends State<MainShell> {
       case 11:
         context.go('/financial-reports');
         break;
-      case 12:
-        context.go('/suppliers');
-        break;
+      // PHASE 1: Suppliers UI removed
+      // case 12:
+      //   context.go('/suppliers');
+      //   break;
     }
   }
   
@@ -301,14 +303,16 @@ class _MainShellState extends State<MainShell> {
                           label: 'Shift Finance',
                           isSelected: selectedIndex == 10,
                         ),
-                        _buildNavItem(
+                        // PHASE 1: Suppliers UI removed - data layer retained for FK safety
+                        // Supplier management is disabled but table and transactions remain
+                        /* _buildNavItem(
                           context,
                           index: 12,
                           icon: Icons.business_outlined,
                           selectedIcon: Icons.business,
                           label: 'Suppliers',
                           isSelected: selectedIndex == 12,
-                        ),
+                        ), */
                         _buildNavItem(
                           context,
                           index: 11,
@@ -627,8 +631,9 @@ class _MainShellState extends State<MainShell> {
         return 'Shift Finance';
       case 11:
         return 'Financial Reports';
-      case 12:
-        return 'Suppliers';
+      // PHASE 1: Suppliers UI removed
+      // case 12:
+      //   return 'Suppliers';
       default:
         return '';
     }

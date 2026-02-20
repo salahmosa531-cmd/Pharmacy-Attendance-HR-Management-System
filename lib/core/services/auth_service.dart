@@ -14,6 +14,7 @@ import '../../data/models/shift_model.dart';
 import 'package:flutter/material.dart';
 import '../constants/app_constants.dart';
 import 'logging_service.dart';
+import 'employee_resolver_service.dart';
 
 /// Authentication service for user login/logout
 /// 
@@ -94,12 +95,16 @@ class AuthService {
   }
   
   /// Register a new user
+  /// 
+  /// SINGLE-BRANCH ARCHITECTURE: Automatically provisions an employee for the user
+  /// if one is not provided. This ensures every user has a valid employee context.
   Future<User> registerUser({
     required String username,
     required String password,
     required UserRole role,
     String? employeeId,
     String? branchId,
+    bool autoProvisionEmployee = true,
   }) async {
     // Check if username exists
     if (await _userRepository.usernameExists(username)) {
@@ -135,6 +140,25 @@ class AuthService {
       newValues: {'username': username, 'role': role.value},
     );
     
+    // AUTO-PROVISION EMPLOYEE: Ensure user has an employee record
+    if (autoProvisionEmployee && employeeId == null) {
+      try {
+        final employee = await EmployeeResolverService.instance.getEmployeeForUser(user);
+        LoggingService.instance.info(
+          'Auth',
+          '[EMPLOYEE_AUTO_PROVISIONED] Created employee ${employee.id} for new user ${user.username}',
+        );
+        // Return user with updated employeeId
+        return user.copyWith(employeeId: employee.id);
+      } catch (e) {
+        LoggingService.instance.warning(
+          'Auth',
+          'Failed to auto-provision employee for user ${user.username}: $e',
+        );
+        // Continue without employee - will be resolved on next login
+      }
+    }
+    
     return user;
   }
   
@@ -158,6 +182,23 @@ class AuthService {
     await _userRepository.updateLastLogin(user.id);
     
     _currentUser = user.copyWith(lastLogin: DateTime.now());
+    
+    // EMPLOYEE RESOLUTION: Ensure user has an employee before proceeding
+    if (_currentUser!.employeeId == null) {
+      try {
+        final employee = await EmployeeResolverService.instance.getEmployeeForUser(_currentUser!);
+        _currentUser = _currentUser!.copyWith(employeeId: employee.id);
+        LoggingService.instance.info(
+          'Auth',
+          '[EMPLOYEE_RESOLVED_ON_LOGIN] Resolved employee ${employee.id} for user ${user.username}',
+        );
+      } catch (e) {
+        LoggingService.instance.warning(
+          'Auth',
+          'Failed to resolve employee on login for ${user.username}: $e',
+        );
+      }
+    }
 
     if (AuthSessionPolicy.persistAdminSession) {
       await _persistSession(_currentUser!.id);

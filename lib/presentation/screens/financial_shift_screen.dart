@@ -3,19 +3,27 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../core/services/financial_service.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/employee_resolver_service.dart';
+import '../../core/services/logging_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
+import '../../data/models/employee_model.dart';
 import '../../data/repositories/employee_repository.dart';
+import '../widgets/purchase_payment_entry_dialog.dart';
+import '../widgets/debt_collection_dialog.dart';
 
-/// Financial Shift Management Screen
+/// Financial Shift Management Screen - Intelligence Dashboard
 /// 
-/// Handles:
-/// - Opening new financial shifts
-/// - Recording sales and expenses
-/// - Viewing shift summary
-/// - Closing shifts with cash reconciliation
+/// Features:
+/// - Real-time cash flow summary at top (Opening → Sales → Purchases → Expenses → Collections → Balance)
+/// - Transaction timeline (all operations chronologically)
+/// - Smart alerts (high expenses vs sales, no sales, negative balance)
+/// - Professional UX with loading states, error handling, and functional buttons
+/// 
+/// Example flow:
+/// Start 1,000 EGP → +3,500 Sales → -1,200 Purchases → -300 Expenses → +400 Collection = 3,400 EGP
 class FinancialShiftScreen extends StatefulWidget {
   const FinancialShiftScreen({super.key});
 
@@ -26,18 +34,30 @@ class FinancialShiftScreen extends StatefulWidget {
 class _FinancialShiftScreenState extends State<FinancialShiftScreen> with SingleTickerProviderStateMixin {
   final _financialService = FinancialService.instance;
   final _authService = AuthService.instance;
+  final _employeeResolver = EmployeeResolverService.instance;
   final _employeeRepo = EmployeeRepository.instance;
   
   late TabController _tabController;
   
   bool _isLoading = true;
+  String? _loadError;
   FinancialShift? _currentShift;
   ShiftSummary? _shiftSummary;
   List<ShiftSale> _sales = [];
   List<ShiftExpense> _expenses = [];
   String? _employeeName;
+  Employee? _resolvedEmployee;
   
-  final _currencyFormat = NumberFormat.currency(symbol: 'EGP ', decimalDigits: 2);
+  // Timeline - combined and sorted transactions
+  List<_TimelineItem> _timeline = [];
+  
+  // Cash flow summary (enhanced)
+  ShiftCashFlowSummary? _cashFlowSummary;
+  
+  // Debt collections (for this shift)
+  List<_DebtCollection> _debtCollections = [];
+  
+  final _currencyFormat = NumberFormat.currency(symbol: '', decimalDigits: 2);
   final _timeFormat = DateFormat('hh:mm a');
   final _dateFormat = DateFormat('dd MMM yyyy');
 
@@ -55,42 +75,175 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   }
 
   Future<void> _loadCurrentShift() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
     
     try {
       final currentUser = _authService.currentUser;
       
-      // SINGLE-BRANCH: Load shift for current employee
-      if (currentUser?.employeeId != null) {
-        _currentShift = await _financialService.getOpenShiftForEmployee(currentUser!.employeeId!);
+      if (currentUser == null) {
+        throw Exception('Not logged in');
+      }
+      
+      // EMPLOYEE RESOLUTION
+      try {
+        _resolvedEmployee = await _employeeResolver.getEmployeeForUser(currentUser);
+        LoggingService.instance.info(
+          'FinancialShift',
+          '[EMPLOYEE_RESOLVED] Resolved employee ${_resolvedEmployee!.id} for user ${currentUser.username}',
+        );
+      } catch (e) {
+        LoggingService.instance.error(
+          'FinancialShift',
+          'Failed to resolve employee for user ${currentUser.username}',
+          e,
+          StackTrace.current,
+        );
+        _resolvedEmployee = null;
+      }
+      
+      if (_resolvedEmployee != null) {
+        _currentShift = await _financialService.getOpenShiftForEmployee(_resolvedEmployee!.id);
         
         if (_currentShift != null) {
           _shiftSummary = await _financialService.getShiftSummary(_currentShift!.id);
+          _cashFlowSummary = await _financialService.getShiftCashFlowSummary(_currentShift!.id);
           _sales = await _financialService.getSalesForShift(_currentShift!.id);
           _expenses = await _financialService.getExpensesForShift(_currentShift!.id);
-          
-          // Get employee name
-          final employee = await _employeeRepo.getById(_currentShift!.employeeId);
-          _employeeName = employee?.fullName;
+          _employeeName = _resolvedEmployee!.fullName;
+          await _loadDebtCollections();
+          _buildTimeline();
         }
       }
     } on FinancialException catch (e) {
+      LoggingService.instance.error('FinancialShift', 'FinancialException loading shift', e, StackTrace.current);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: ${e.message}'), backgroundColor: Colors.red),
-        );
+        setState(() => _loadError = 'Error: ${e.message}');
       }
     } catch (e) {
+      LoggingService.instance.error('FinancialShift', 'Error loading shift', e, StackTrace.current);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading shift: $e'), backgroundColor: Colors.red),
-        );
+        setState(() => _loadError = 'Error loading shift: $e');
       }
     }
     
     if (mounted) {
       setState(() => _isLoading = false);
     }
+  }
+  
+  /// Load debt collections for this shift (credit sales payments received)
+  Future<void> _loadDebtCollections() async {
+    // Get credit/account sales as debt collections
+    // In a pharmacy, this tracks customer accounts and insurance reimbursements
+    _debtCollections = _sales
+        .where((s) => s.paymentMethod == PaymentMethod.credit)
+        .map((s) => _DebtCollection(
+          id: s.id,
+          amount: s.amount,
+          customerName: s.customerName ?? 'Customer Account',
+          description: s.description ?? 'Account payment',
+          time: s.createdAt,
+        ))
+        .toList();
+  }
+
+  /// Build timeline from sales, expenses, and purchase payments
+  void _buildTimeline() {
+    _timeline = [];
+    
+    // Add sales (excluding credit sales which are shown separately as debt collections)
+    for (final sale in _sales) {
+      final isDebtCollection = sale.paymentMethod == PaymentMethod.credit;
+      _timeline.add(_TimelineItem(
+        type: isDebtCollection ? _TimelineType.debtCollection : _TimelineType.sale,
+        amount: sale.amount,
+        description: isDebtCollection 
+            ? (sale.customerName ?? 'Debt Collection')
+            : (sale.description ?? sale.paymentMethod.displayName),
+        time: sale.createdAt,
+        icon: isDebtCollection ? Icons.payments : _getPaymentMethodIcon(sale.paymentMethod),
+        color: isDebtCollection ? Colors.teal : Colors.green,
+        subtitle: isDebtCollection 
+            ? sale.description
+            : (sale.invoiceNumber != null ? 'Invoice: ${sale.invoiceNumber}' : sale.paymentMethod.displayName),
+      ));
+    }
+    
+    // Add expenses (separate purchase payments visually)
+    for (final expense in _expenses) {
+      final isPurchase = expense.category == ExpenseCategory.supplies;
+      _timeline.add(_TimelineItem(
+        type: isPurchase ? _TimelineType.purchase : _TimelineType.expense,
+        amount: expense.amount,
+        description: expense.description,
+        time: expense.createdAt,
+        icon: isPurchase ? Icons.inventory_2 : _getExpenseCategoryIcon(expense.category),
+        color: isPurchase ? Colors.orange : Colors.red,
+        subtitle: expense.category.displayName,
+      ));
+    }
+    
+    // Sort by time descending (newest first)
+    _timeline.sort((a, b) => b.time.compareTo(a.time));
+  }
+  
+  /// Get smart alerts based on current shift state
+  List<_ShiftAlert> _getSmartAlerts() {
+    if (_shiftSummary == null || _currentShift == null) return [];
+    
+    final alerts = <_ShiftAlert>[];
+    final shiftDuration = DateTime.now().difference(_currentShift!.openedAt);
+    
+    // Alert 1: No sales after 1 hour
+    if (_sales.isEmpty && shiftDuration.inHours >= 1) {
+      alerts.add(_ShiftAlert(
+        type: _AlertType.warning,
+        title: 'No Sales Recorded',
+        message: 'Shift has been open for ${shiftDuration.inHours}h without any sales',
+        icon: Icons.trending_flat,
+      ));
+    }
+    
+    // Alert 2: High expenses ratio (> 50% of sales)
+    if (_shiftSummary!.totalSales > 0) {
+      final expenseRatio = _shiftSummary!.totalExpenses / _shiftSummary!.totalSales;
+      if (expenseRatio > 0.5) {
+        alerts.add(_ShiftAlert(
+          type: _AlertType.warning,
+          title: 'High Expenses',
+          message: 'Expenses are ${(expenseRatio * 100).toStringAsFixed(0)}% of sales',
+          icon: Icons.trending_down,
+        ));
+      }
+    }
+    
+    // Alert 3: Negative expected cash
+    if (_shiftSummary!.expectedCash < 0) {
+      alerts.add(_ShiftAlert(
+        type: _AlertType.error,
+        title: 'Negative Balance',
+        message: 'Expected cash is negative: ${_currencyFormat.format(_shiftSummary!.expectedCash)} EGP',
+        icon: Icons.warning,
+      ));
+    }
+    
+    // Alert 4: Cash only warning (no card sales)
+    final hasCardSales = _shiftSummary!.salesByMethod.entries.any(
+      (e) => e.key != PaymentMethod.cash && e.value > 0
+    );
+    if (_sales.length > 5 && !hasCardSales) {
+      alerts.add(_ShiftAlert(
+        type: _AlertType.info,
+        title: 'Cash Only',
+        message: 'All sales are in cash - consider offering card payment',
+        icon: Icons.credit_card_off,
+      ));
+    }
+    
+    return alerts;
   }
 
   Future<void> _openShift() async {
@@ -100,24 +253,27 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     setState(() => _isLoading = true);
     
     try {
-      final currentUser = _authService.currentUser;
-      
-      if (currentUser?.employeeId == null) {
-        throw FinancialException('No employee context', code: 'NO_CONTEXT');
+      if (_resolvedEmployee == null) {
+        final currentUser = _authService.currentUser;
+        if (currentUser != null) {
+          _resolvedEmployee = await _employeeResolver.getEmployeeForUser(currentUser);
+        }
       }
       
-      // SINGLE-BRANCH: openShift handles branch internally
+      if (_resolvedEmployee == null) {
+        throw FinancialException('Could not resolve employee profile', code: 'EMPLOYEE_RESOLUTION_FAILED');
+      }
+      
       _currentShift = await _financialService.openShift(
-        employeeId: currentUser!.employeeId!,
+        employeeId: _resolvedEmployee!.id,
         openingCash: openingCash,
       );
       
       _shiftSummary = await _financialService.getShiftSummary(_currentShift!.id);
       _sales = [];
       _expenses = [];
-      
-      final employee = await _employeeRepo.getById(_currentShift!.employeeId);
-      _employeeName = employee?.fullName;
+      _timeline = [];
+      _employeeName = _resolvedEmployee?.fullName;
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -143,9 +299,23 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     return showDialog<double>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Open Financial Shift'),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.play_circle, color: AppTheme.primaryColor),
+            ),
+            const SizedBox(width: 12),
+            const Text('Open Shift'),
+          ],
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Enter the opening cash in the drawer:'),
             const SizedBox(height: 16),
@@ -157,8 +327,10 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                 labelText: 'Opening Cash (EGP)',
                 prefixIcon: Icon(Icons.payments),
                 border: OutlineInputBorder(),
+                suffixText: 'EGP',
               ),
               autofocus: true,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -167,12 +339,13 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          FilledButton(
+          FilledButton.icon(
             onPressed: () {
               final value = double.tryParse(controller.text) ?? 0;
               Navigator.pop(context, value);
             },
-            child: const Text('Open Shift'),
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('Start Shift'),
           ),
         ],
       ),
@@ -201,7 +374,16 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Sale recorded'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Text('Sale recorded: ${_currencyFormat.format(result['amount'])} EGP'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
@@ -227,7 +409,20 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Record Sale'),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.add_shopping_cart, color: Colors.green),
+              ),
+              const SizedBox(width: 12),
+              const Text('Record Sale'),
+            ],
+          ),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -240,8 +435,10 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                     labelText: 'Amount (EGP) *',
                     prefixIcon: Icon(Icons.attach_money),
                     border: OutlineInputBorder(),
+                    suffixText: 'EGP',
                   ),
                   autofocus: true,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<PaymentMethod>(
@@ -253,7 +450,13 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                   ),
                   items: PaymentMethod.values.map((m) => DropdownMenuItem(
                     value: m,
-                    child: Text(m.displayName),
+                    child: Row(
+                      children: [
+                        Icon(_getPaymentMethodIcon(m), size: 20, color: _getPaymentMethodColor(m)),
+                        const SizedBox(width: 8),
+                        Text(m.displayName),
+                      ],
+                    ),
                   )).toList(),
                   onChanged: (v) => setDialogState(() => selectedMethod = v!),
                 ),
@@ -284,7 +487,8 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancel'),
             ),
-            FilledButton(
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: Colors.green),
               onPressed: () {
                 final amount = double.tryParse(amountController.text);
                 if (amount == null || amount <= 0) {
@@ -300,7 +504,8 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                   'invoice': invoiceController.text.isEmpty ? null : invoiceController.text,
                 });
               },
-              child: const Text('Record Sale'),
+              icon: const Icon(Icons.check),
+              label: const Text('Record'),
             ),
           ],
         ),
@@ -308,6 +513,102 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     );
   }
 
+  Future<void> _recordPurchasePayment() async {
+    if (_currentShift == null) return;
+    
+    final result = await PurchasePaymentEntryDialog.show(
+      context,
+      financialShiftId: _currentShift!.id,
+    );
+    
+    if (result == null) return;
+    
+    setState(() => _isLoading = true);
+    
+    try {
+      await _financialService.recordExpense(
+        financialShiftId: _currentShift!.id,
+        amount: result['amount'] as double,
+        category: result['category'] as ExpenseCategory,
+        description: result['description'] as String,
+        receiptNumber: result['invoiceNumber'] as String?,
+        recordedBy: _currentShift!.employeeId,
+      );
+      
+      await _refreshShiftData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Purchase payment recorded'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error recording payment: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+    
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+  
+  /// Record a debt collection (payment received from customer account/insurance)
+  Future<void> _recordDebtCollection() async {
+    if (_currentShift == null) return;
+    
+    final result = await DebtCollectionDialog.show(
+      context,
+      financialShiftId: _currentShift!.id,
+    );
+    
+    if (result == null) return;
+    
+    setState(() => _isLoading = true);
+    
+    try {
+      // Record as a credit sale (payment received on account)
+      await _financialService.recordSale(
+        financialShiftId: _currentShift!.id,
+        amount: result['amount'] as double,
+        paymentMethod: PaymentMethod.credit, // Credit = account payment
+        description: result['description'] as String?,
+        customerName: result['customerName'] as String?,
+        invoiceNumber: result['reference'] as String?,
+        recordedBy: _currentShift!.employeeId,
+      );
+      
+      await _refreshShiftData();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Text('Collection recorded: ${_currencyFormat.format(result['amount'])} EGP'),
+              ],
+            ),
+            backgroundColor: Colors.teal,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error recording collection: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+    
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+  
   Future<void> _recordExpense() async {
     if (_currentShift == null) return;
     
@@ -330,7 +631,16 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Expense recorded'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Text('Expense recorded: ${_currencyFormat.format(result['amount'])} EGP'),
+              ],
+            ),
+            backgroundColor: Colors.orange,
+          ),
         );
       }
     } catch (e) {
@@ -356,7 +666,20 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Record Expense'),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.remove_shopping_cart, color: Colors.red),
+              ),
+              const SizedBox(width: 12),
+              const Text('Record Expense'),
+            ],
+          ),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -369,8 +692,10 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                     labelText: 'Amount (EGP) *',
                     prefixIcon: Icon(Icons.attach_money),
                     border: OutlineInputBorder(),
+                    suffixText: 'EGP',
                   ),
                   autofocus: true,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<ExpenseCategory>(
@@ -382,7 +707,13 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                   ),
                   items: ExpenseCategory.values.map((c) => DropdownMenuItem(
                     value: c,
-                    child: Text(c.displayName),
+                    child: Row(
+                      children: [
+                        Icon(_getExpenseCategoryIcon(c), size: 20, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Text(c.displayName),
+                      ],
+                    ),
                   )).toList(),
                   onChanged: (v) => setDialogState(() => selectedCategory = v!),
                 ),
@@ -413,7 +744,8 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
               onPressed: () => Navigator.pop(context),
               child: const Text('Cancel'),
             ),
-            FilledButton(
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () {
                 final amount = double.tryParse(amountController.text);
                 if (amount == null || amount <= 0) {
@@ -435,7 +767,8 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                   'receipt': receiptController.text.isEmpty ? null : receiptController.text,
                 });
               },
-              child: const Text('Record Expense'),
+              icon: const Icon(Icons.check),
+              label: const Text('Record'),
             ),
           ],
         ),
@@ -470,6 +803,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       _shiftSummary = null;
       _sales = [];
       _expenses = [];
+      _timeline = [];
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -497,30 +831,43 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
           final expectedCash = _shiftSummary?.expectedCash ?? 0;
           
           return AlertDialog(
-            title: const Text('Close Shift'),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.stop_circle, color: Colors.orange),
+                ),
+                const SizedBox(width: 12),
+                const Text('Close Shift'),
+              ],
+            ),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Summary Card
-                  Card(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildSummaryRow('Opening Cash', _currentShift?.openingCash ?? 0),
-                          _buildSummaryRow('Cash Sales', _shiftSummary?.cashSales ?? 0),
-                          _buildSummaryRow('Expenses', _shiftSummary?.totalExpenses ?? 0, isNegative: true),
-                          const Divider(),
-                          _buildSummaryRow('Expected Cash', expectedCash, isBold: true),
-                        ],
-                      ),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        _buildDialogSummaryRow('Opening Cash', _currentShift?.openingCash ?? 0, Icons.account_balance_wallet),
+                        _buildDialogSummaryRow('+ Cash Sales', _shiftSummary?.cashSales ?? 0, Icons.add_circle, color: Colors.green),
+                        _buildDialogSummaryRow('- Expenses', _shiftSummary?.totalExpenses ?? 0, Icons.remove_circle, color: Colors.red),
+                        const Divider(height: 24),
+                        _buildDialogSummaryRow('= Expected', expectedCash, Icons.calculate, isBold: true, color: AppTheme.primaryColor),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   
                   // Actual Cash Input
                   TextField(
@@ -531,8 +878,10 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                       labelText: 'Actual Cash in Drawer (EGP) *',
                       prefixIcon: Icon(Icons.point_of_sale),
                       border: OutlineInputBorder(),
+                      suffixText: 'EGP',
                     ),
                     autofocus: true,
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     onChanged: (value) {
                       setDialogState(() {
                         enteredCash = double.tryParse(value);
@@ -548,10 +897,10 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: difference == 0 
-                            ? Colors.green.withValues(alpha: 0.1)
+                            ? Colors.green.withOpacity(0.1)
                             : difference > 0 
-                                ? Colors.blue.withValues(alpha: 0.1)
-                                : Colors.red.withValues(alpha: 0.1),
+                                ? Colors.blue.withOpacity(0.1)
+                                : Colors.red.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: difference == 0 
@@ -577,8 +926,8 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                               difference == 0 
                                   ? 'Cash matches expected!'
                                   : difference > 0 
-                                      ? 'Overage: ${_currencyFormat.format(difference)}'
-                                      : 'Shortage: ${_currencyFormat.format(difference.abs())}',
+                                      ? 'Overage: +${_currencyFormat.format(difference)} EGP'
+                                      : 'Shortage: ${_currencyFormat.format(difference)} EGP',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: difference == 0 
@@ -597,11 +946,11 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                     const SizedBox(height: 16),
                     TextField(
                       controller: reasonController,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Reason for Difference *',
-                        prefixIcon: Icon(Icons.warning_amber),
-                        border: OutlineInputBorder(),
-                        hintText: 'Explain the shortage or overage',
+                        prefixIcon: Icon(Icons.warning_amber, color: difference < 0 ? Colors.red : Colors.blue),
+                        border: const OutlineInputBorder(),
+                        hintText: 'Explain the ${difference > 0 ? "overage" : "shortage"}',
                       ),
                       maxLines: 2,
                     ),
@@ -625,7 +974,8 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Cancel'),
               ),
-              FilledButton(
+              FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: Colors.orange),
                 onPressed: () {
                   final actualCash = double.tryParse(actualCashController.text);
                   if (actualCash == null) {
@@ -648,7 +998,8 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                     'notes': notesController.text.isEmpty ? null : notesController.text,
                   });
                 },
-                child: const Text('Close Shift'),
+                icon: const Icon(Icons.lock),
+                label: const Text('Close Shift'),
               ),
             ],
           );
@@ -656,19 +1007,29 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       ),
     );
   }
-
-  Widget _buildSummaryRow(String label, double value, {bool isNegative = false, bool isBold = false}) {
+  
+  Widget _buildDialogSummaryRow(String label, double value, IconData icon, {bool isBold = false, Color? color}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
+          Icon(icon, size: 18, color: color ?? Colors.grey),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
+                color: color,
+              ),
+            ),
+          ),
           Text(
-            '${isNegative ? "-" : ""}${_currencyFormat.format(value)}',
+            '${_currencyFormat.format(value)} EGP',
             style: TextStyle(
               fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-              color: isNegative ? Colors.red : null,
+              color: color,
+              fontSize: isBold ? 16 : 14,
             ),
           ),
         ],
@@ -679,41 +1040,209 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   Future<void> _refreshShiftData() async {
     if (_currentShift == null) return;
     
-    _shiftSummary = await _financialService.getShiftSummary(_currentShift!.id);
-    _sales = await _financialService.getSalesForShift(_currentShift!.id);
-    _expenses = await _financialService.getExpensesForShift(_currentShift!.id);
-    
-    if (mounted) setState(() {});
+    try {
+      _shiftSummary = await _financialService.getShiftSummary(_currentShift!.id);
+      _cashFlowSummary = await _financialService.getShiftCashFlowSummary(_currentShift!.id);
+      _sales = await _financialService.getSalesForShift(_currentShift!.id);
+      _expenses = await _financialService.getExpensesForShift(_currentShift!.id);
+      await _loadDebtCollections();
+      _buildTimeline();
+      
+      if (mounted) setState(() {});
+    } catch (e) {
+      LoggingService.instance.error('FinancialShift', 'Error refreshing shift data', e, StackTrace.current);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error refreshing data: $e'),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: _refreshShiftData,
+            ),
+          ),
+        );
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // SINGLE-BRANCH: No branch guard needed
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Financial Shift'),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.point_of_sale, color: AppTheme.primaryColor, size: 20),
+            ),
+            const SizedBox(width: 10),
+            const Text('Financial Shift'),
+          ],
+        ),
         actions: [
-          if (_currentShift != null)
+          if (_currentShift != null) ...[
+            // Shift duration indicator
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.green.withOpacity(0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.timer_outlined, size: 14, color: Colors.green),
+                  const SizedBox(width: 4),
+                  Text(
+                    'LIVE',
+                    style: TextStyle(
+                      color: Colors.green[700],
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _loadCurrentShift,
+              onPressed: _isLoading ? null : _loadCurrentShift,
               tooltip: 'Refresh',
             ),
+          ],
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _currentShift == null
-              ? _buildNoShiftView()
-              : _buildShiftView(),
+          ? _buildLoadingView()
+          : _loadError != null
+              ? _buildErrorView()
+              : _currentShift == null
+                  ? _buildNoShiftView()
+                  : _buildShiftView(),
+    );
+  }
+  
+  /// Professional loading skeleton view
+  Widget _buildLoadingView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          // Header skeleton
+          Container(
+            height: 200,
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Loading shift data...',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Skeleton cards
+          Row(
+            children: [
+              Expanded(child: _buildSkeletonCard()),
+              const SizedBox(width: 8),
+              Expanded(child: _buildSkeletonCard()),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _buildSkeletonCard()),
+              const SizedBox(width: 8),
+              Expanded(child: _buildSkeletonCard()),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Balance skeleton
+          Container(
+            height: 100,
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildSkeletonCard() {
+    return Container(
+      height: 70,
+      decoration: BoxDecoration(
+        color: Colors.grey[200],
+        borderRadius: BorderRadius.circular(10),
+      ),
+    );
+  }
+  
+  Widget _buildErrorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(40),
+              ),
+              child: const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Error Loading Shift',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _loadError!,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: _loadCurrentShift,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
-  /// Check if current user has valid employee context
-  bool get _hasEmployeeContext => _authService.currentUser?.employeeId != null;
+  bool get _hasEmployeeContext => _resolvedEmployee != null;
   
   Widget _buildNoShiftView() {
-    // Guard: Check if user has employee context
     if (!_hasEmployeeContext) {
       return _buildNoEmployeeContextView();
     }
@@ -726,19 +1255,27 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.point_of_sale,
-                size: 80,
-                color: Theme.of(context).colorScheme.primary,
+              Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(50),
+                ),
+                child: Icon(
+                  Icons.point_of_sale,
+                  size: 56,
+                  color: AppTheme.primaryColor,
+                ),
               ),
               const SizedBox(height: 24),
               Text(
                 'No Open Shift',
-                style: Theme.of(context).textTheme.headlineSmall,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               Text(
-                'Start a new financial shift to begin recording sales and expenses.',
+                'Start a new financial shift to begin recording\nsales, expenses and track cash flow.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -749,6 +1286,9 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                 onPressed: _openShift,
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Open New Shift'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                ),
               ),
             ],
           ),
@@ -757,7 +1297,6 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     );
   }
   
-  /// View displayed when user account is not linked to an employee profile
   Widget _buildNoEmployeeContextView() {
     return Center(
       child: Card(
@@ -783,60 +1322,33 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
               const SizedBox(height: 24),
               Text(
                 'Employee Profile Required',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.3),
+                  color: Theme.of(context).colorScheme.errorContainer.withOpacity(0.3),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.error.withValues(alpha: 0.5),
-                  ),
+                  border: Border.all(color: Theme.of(context).colorScheme.error.withOpacity(0.5)),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.warning_amber,
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                    Icon(Icons.warning_amber, color: Theme.of(context).colorScheme.error),
                     const SizedBox(width: 12),
-                    Flexible(
-                      child: Text(
-                        'This account is not linked to an employee profile.',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Theme.of(context).colorScheme.onErrorContainer,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+                    const Flexible(
+                      child: Text('This account is not linked to an employee profile.'),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
               Text(
-                'To open a financial shift, your user account must be linked to an employee record. Please contact your administrator to:\n\n• Create an employee profile for you, or\n• Link your user account to an existing employee profile',
+                'Contact your administrator to link your account.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 24),
-              FilledButton.tonalIcon(
-                onPressed: null, // Disabled
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Open New Shift'),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Button disabled until employee profile is linked',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.outline,
-                  fontStyle: FontStyle.italic,
                 ),
               ),
             ],
@@ -849,55 +1361,21 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   Widget _buildShiftView() {
     return Column(
       children: [
-        // Shift Header
-        Container(
-          color: Theme.of(context).colorScheme.primaryContainer,
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Shift Active',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onPrimaryContainer,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Opened: ${_dateFormat.format(_currentShift!.openedAt)} at ${_timeFormat.format(_currentShift!.openedAt)}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
-                      ),
-                    ),
-                    if (_employeeName != null)
-                      Text(
-                        'By: $_employeeName',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              FilledButton.tonalIcon(
-                onPressed: _closeShift,
-                icon: const Icon(Icons.stop),
-                label: const Text('Close Shift'),
-              ),
-            ],
-          ),
-        ),
+        // ═══════════════════════════════════════════════════════════
+        // LIVE FINANCIAL SUMMARY - Always visible at top
+        // ═══════════════════════════════════════════════════════════
+        _buildLiveFinancialSummary(),
+        
+        // Smart Alerts
+        ..._buildSmartAlerts(),
         
         // Tab Bar
         TabBar(
           controller: _tabController,
           tabs: [
             Tab(
-              icon: const Icon(Icons.dashboard),
-              text: 'Summary',
+              icon: const Icon(Icons.timeline),
+              text: 'Timeline',
             ),
             Tab(
               icon: Badge(
@@ -923,7 +1401,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
           child: TabBarView(
             controller: _tabController,
             children: [
-              _buildSummaryTab(),
+              _buildTimelineTab(),
               _buildSalesTab(),
               _buildExpensesTab(),
             ],
@@ -932,121 +1410,343 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       ],
     );
   }
-
-  Widget _buildSummaryTab() {
-    if (_shiftSummary == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+  
+  /// ═══════════════════════════════════════════════════════════════════
+  /// LIVE FINANCIAL SUMMARY WIDGET - ENHANCED VERSION
+  /// Shows: Opening → Sales → Purchases → Expenses → Debt Collection → Balance
+  /// Example: Start 1,000 ج → +3,500 Sales → -1,200 Purchases → -300 Expenses → +400 Collection = 3,400 ج
+  /// ═══════════════════════════════════════════════════════════════════
+  Widget _buildLiveFinancialSummary() {
+    if (_shiftSummary == null) return const SizedBox.shrink();
     
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    // Use ShiftCashFlowSummary for accurate calculations
+    final openingCash = _cashFlowSummary?.openingCash ?? _currentShift?.openingCash ?? 0;
+    final cashSales = _cashFlowSummary?.cashSales ?? _shiftSummary!.cashSales;
+    final totalSales = _shiftSummary!.totalSales;
+    
+    // Separate purchases (supplies) from other expenses
+    final purchasePayments = _shiftSummary!.expensesByCategory[ExpenseCategory.supplies] ?? 0;
+    final otherExpenses = _shiftSummary!.totalExpenses - purchasePayments;
+    
+    // Debt collections (credit sales = customer account payments received)
+    final debtCollections = _shiftSummary!.salesByMethod[PaymentMethod.credit] ?? 0;
+    
+    // Calculate current balance (cash in drawer)
+    // Opening + Cash Sales - Purchases - Expenses + Debt Collections (if cash)
+    final currentBalance = _cashFlowSummary?.expectedCash ?? _shiftSummary!.expectedCash;
+    
+    // Calculate shift duration
+    final duration = DateTime.now().difference(_currentShift!.openedAt);
+    final durationText = duration.inHours > 0 
+        ? '${duration.inHours}h ${duration.inMinutes % 60}m'
+        : '${duration.inMinutes}m';
+    
+    return Container(
+      margin: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppTheme.primaryColor.withOpacity(0.12),
+            Colors.green.withOpacity(0.06),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.primaryColor.withOpacity(0.3)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Key Metrics Row
-          Row(
-            children: [
-              Expanded(child: _buildMetricCard('Total Sales', _shiftSummary!.totalSales, Icons.trending_up, Colors.green)),
-              const SizedBox(width: 16),
-              Expanded(child: _buildMetricCard('Total Expenses', _shiftSummary!.totalExpenses, Icons.trending_down, Colors.red)),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(child: _buildMetricCard('Net Profit', _shiftSummary!.netProfit, Icons.account_balance, AppTheme.primaryColor)),
-              const SizedBox(width: 16),
-              Expanded(child: _buildMetricCard('Expected Cash', _shiftSummary!.expectedCash, Icons.payments, Colors.orange)),
-            ],
-          ),
-          
-          const SizedBox(height: 24),
-          
-          // Sales by Payment Method
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Sales by Payment Method', style: Theme.of(context).textTheme.titleMedium),
-                  const Divider(),
-                  ..._shiftSummary!.salesByMethod.entries.map((e) => ListTile(
-                    leading: Icon(_getPaymentMethodIcon(e.key)),
-                    title: Text(e.key.displayName),
-                    trailing: Text(_currencyFormat.format(e.value)),
-                  )),
-                  if (_shiftSummary!.salesByMethod.isEmpty)
-                    const ListTile(
-                      leading: Icon(Icons.info_outline),
-                      title: Text('No sales recorded yet'),
-                    ),
-                ],
-              ),
+          // Header with shift info
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withOpacity(0.15),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.play_circle, color: Colors.green, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Shift Started: ${_timeFormat.format(_currentShift!.openedAt)}',
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                      ),
+                      Text(
+                        'Duration: $durationText • ${_employeeName ?? "Unknown"}',
+                        style: TextStyle(color: Colors.grey[600], fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: _closeShift,
+                  icon: const Icon(Icons.stop_circle, size: 18),
+                  label: const Text('Close Shift'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.orange.withOpacity(0.15),
+                    foregroundColor: Colors.orange[700],
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                ),
+              ],
             ),
           ),
           
-          const SizedBox(height: 16),
-          
-          // Expenses by Category
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Expenses by Category', style: Theme.of(context).textTheme.titleMedium),
-                  const Divider(),
-                  ..._shiftSummary!.expensesByCategory.entries.map((e) => ListTile(
-                    leading: Icon(_getExpenseCategoryIcon(e.key)),
-                    title: Text(e.key.displayName),
-                    trailing: Text('-${_currencyFormat.format(e.value)}', style: const TextStyle(color: Colors.red)),
-                  )),
-                  if (_shiftSummary!.expensesByCategory.isEmpty)
-                    const ListTile(
-                      leading: Icon(Icons.info_outline),
-                      title: Text('No expenses recorded yet'),
+          // Financial Flow - Visual Cash Flow
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                // Cash Flow Formula Display
+                _buildCashFlowFormula(
+                  opening: openingCash,
+                  sales: cashSales,
+                  purchases: purchasePayments,
+                  expenses: otherExpenses,
+                  collections: debtCollections,
+                  balance: currentBalance,
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Detailed Grid
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSummaryItem(
+                        'Opening Cash',
+                        openingCash,
+                        Icons.account_balance_wallet,
+                        Colors.blue,
+                        prefix: '',
+                      ),
                     ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _buildSummaryItem(
+                        'Cash Sales',
+                        cashSales,
+                        Icons.trending_up,
+                        Colors.green,
+                        prefix: '+',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildSummaryItem(
+                        'Purchases',
+                        purchasePayments,
+                        Icons.inventory_2,
+                        Colors.orange,
+                        prefix: '-',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _buildSummaryItem(
+                        'Expenses',
+                        otherExpenses,
+                        Icons.receipt_long,
+                        Colors.red,
+                        prefix: '-',
+                      ),
+                    ),
+                  ],
+                ),
+                
+                // Debt Collection Row (if any)
+                if (debtCollections > 0) ...[
+                  const SizedBox(height: 8),
+                  _buildSummaryItem(
+                    'Debt Collections',
+                    debtCollections,
+                    Icons.payments,
+                    Colors.teal,
+                    prefix: '+',
+                    fullWidth: true,
+                  ),
                 ],
-              ),
-            ),
-          ),
-          
-          const SizedBox(height: 16),
-          
-          // Opening Cash Info
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.account_balance_wallet),
-              title: const Text('Opening Cash'),
-              trailing: Text(_currencyFormat.format(_currentShift?.openingCash ?? 0)),
+                
+                // Divider with arrow
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  child: Row(
+                    children: [
+                      Expanded(child: Divider(color: AppTheme.primaryColor.withOpacity(0.3), thickness: 1.5)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryColor.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.arrow_downward, color: AppTheme.primaryColor, size: 16),
+                            const SizedBox(width: 4),
+                            Text(
+                              'RESULT',
+                              style: TextStyle(
+                                color: AppTheme.primaryColor,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(child: Divider(color: AppTheme.primaryColor.withOpacity(0.3), thickness: 1.5)),
+                    ],
+                  ),
+                ),
+                
+                // Current Balance - Large Display
+                _buildCurrentBalanceCard(currentBalance),
+                
+                // Quick Actions - Row 1
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _recordSale,
+                        icon: const Icon(Icons.add_shopping_cart, size: 18),
+                        label: const Text('Sale'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.green,
+                          side: const BorderSide(color: Colors.green),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _recordPurchasePayment,
+                        icon: const Icon(Icons.inventory_2, size: 18),
+                        label: const Text('Purchase'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.orange,
+                          side: const BorderSide(color: Colors.orange),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                // Quick Actions - Row 2
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _recordExpense,
+                        icon: const Icon(Icons.receipt_long, size: 18),
+                        label: const Text('Expense'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _recordDebtCollection,
+                        icon: const Icon(Icons.payments, size: 18),
+                        label: const Text('Collection'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.teal,
+                          side: const BorderSide(color: Colors.teal),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
   }
-
-  Widget _buildMetricCard(String label, double value, IconData icon, Color color) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  
+  /// Build visual cash flow formula
+  /// Example: 1,000 + 3,500 - 1,200 - 300 + 400 = 3,400
+  Widget _buildCashFlowFormula({
+    required double opening,
+    required double sales,
+    required double purchases,
+    required double expenses,
+    required double collections,
+    required double balance,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.grey.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.withOpacity(0.2)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Row(
-              children: [
-                Icon(icon, color: color, size: 20),
-                const SizedBox(width: 8),
-                Text(label, style: Theme.of(context).textTheme.bodySmall),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _currencyFormat.format(value),
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: color,
+            _buildFormulaItem('${_formatCompact(opening)}', Colors.blue, ''),
+            _buildFormulaOperator('+'),
+            _buildFormulaItem('${_formatCompact(sales)}', Colors.green, '+'),
+            _buildFormulaOperator('-'),
+            _buildFormulaItem('${_formatCompact(purchases)}', Colors.orange, '-'),
+            _buildFormulaOperator('-'),
+            _buildFormulaItem('${_formatCompact(expenses)}', Colors.red, '-'),
+            if (collections > 0) ...[
+              _buildFormulaOperator('+'),
+              _buildFormulaItem('${_formatCompact(collections)}', Colors.teal, '+'),
+            ],
+            _buildFormulaOperator('='),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: balance >= 0 ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: balance >= 0 ? Colors.green : Colors.red,
+                  width: 2,
+                ),
+              ),
+              child: Text(
+                '${_formatCompact(balance)}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  color: balance >= 0 ? Colors.green[700] : Colors.red[700],
+                ),
               ),
             ),
           ],
@@ -1054,11 +1754,385 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       ),
     );
   }
+  
+  Widget _buildFormulaItem(String value, Color color, String prefix) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        value,
+        style: TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 14,
+          color: color,
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildFormulaOperator(String op) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Text(
+        op,
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 16,
+          color: Colors.grey[600],
+        ),
+      ),
+    );
+  }
+  
+  String _formatCompact(double value) {
+    if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}K';
+    }
+    return value.toStringAsFixed(0);
+  }
+  
+  /// Build current balance card with visual emphasis
+  Widget _buildCurrentBalanceCard(double balance) {
+    final isPositive = balance >= 0;
+    final color = isPositive ? Colors.green : Colors.red;
+    
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            color.withOpacity(0.15),
+            color.withOpacity(0.05),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.2),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              isPositive ? Icons.account_balance : Icons.warning_amber,
+              color: color,
+              size: 32,
+            ),
+          ),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Expected Cash in Drawer',
+                style: TextStyle(
+                  color: color.shade700,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _currencyFormat.format(balance),
+                    style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: color.shade700,
+                      height: 1,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      'EGP',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: color.shade600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildSummaryItem(
+    String label,
+    double value,
+    IconData icon,
+    Color color, {
+    String prefix = '',
+    bool fullWidth = false,
+  }) {
+    final content = Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 18),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: color.shade700,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$prefix${_currencyFormat.format(value)} EGP',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: color.shade700,
+                    fontSize: 15,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    
+    return fullWidth ? content : content;
+  }
+  
+  /// Build smart alerts list
+  List<Widget> _buildSmartAlerts() {
+    final alerts = _getSmartAlerts();
+    if (alerts.isEmpty) return [];
+    
+    return [
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Column(
+          children: alerts.map((alert) => Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: _getAlertColor(alert.type).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _getAlertColor(alert.type).withOpacity(0.5)),
+            ),
+            child: Row(
+              children: [
+                Icon(alert.icon, color: _getAlertColor(alert.type), size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        alert.title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: _getAlertColor(alert.type),
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        alert.message,
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          )).toList(),
+        ),
+      ),
+    ];
+  }
+  
+  Color _getAlertColor(_AlertType type) {
+    switch (type) {
+      case _AlertType.error:
+        return Colors.red;
+      case _AlertType.warning:
+        return Colors.orange;
+      case _AlertType.info:
+        return Colors.blue;
+    }
+  }
+  
+  /// ═══════════════════════════════════════════════════════════════════
+  /// TIMELINE TAB - All transactions chronologically
+  /// ═══════════════════════════════════════════════════════════════════
+  Widget _buildTimelineTab() {
+    if (_timeline.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.timeline, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text('No transactions yet', style: TextStyle(color: Colors.grey[600])),
+            const SizedBox(height: 8),
+            Text('Record a sale or expense to see it here', style: TextStyle(color: Colors.grey[400], fontSize: 12)),
+          ],
+        ),
+      );
+    }
+    
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _timeline.length,
+      itemBuilder: (context, index) {
+        final item = _timeline[index];
+        final isFirst = index == 0;
+        final isLast = index == _timeline.length - 1;
+        
+        return IntrinsicHeight(
+          child: Row(
+            children: [
+              // Timeline line and dot
+              SizedBox(
+                width: 40,
+                child: Column(
+                  children: [
+                    // Line above
+                    if (!isFirst)
+                      Expanded(
+                        child: Container(
+                          width: 2,
+                          color: Colors.grey[300],
+                        ),
+                      ),
+                    // Dot
+                    Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: item.color,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: item.color.withOpacity(0.3),
+                            blurRadius: 4,
+                            spreadRadius: 1,
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Line below
+                    if (!isLast)
+                      Expanded(
+                        child: Container(
+                          width: 2,
+                          color: Colors.grey[300],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              
+              // Content
+              Expanded(
+                child: Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: item.color.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(item.icon, color: item.color, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.description,
+                                style: const TextStyle(fontWeight: FontWeight.w500),
+                              ),
+                              if (item.subtitle != null)
+                                Text(
+                                  item.subtitle!,
+                                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                                ),
+                            ],
+                          ),
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              '${item.sign}${_currencyFormat.format(item.amount)}',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: item.color,
+                              ),
+                            ),
+                            Text(
+                              _timeFormat.format(item.time),
+                              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   Widget _buildSalesTab() {
     return Column(
       children: [
-        // Add Sale Button
         Padding(
           padding: const EdgeInsets.all(16),
           child: SizedBox(
@@ -1067,20 +2141,22 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
               onPressed: _recordSale,
               icon: const Icon(Icons.add),
               label: const Text('Record Sale'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.green,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+              ),
             ),
           ),
         ),
-        
-        // Sales List
         Expanded(
           child: _sales.isEmpty
               ? Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.point_of_sale, size: 64, color: Theme.of(context).colorScheme.outline),
+                      Icon(Icons.point_of_sale, size: 64, color: Colors.grey[400]),
                       const SizedBox(height: 16),
-                      Text('No sales recorded', style: Theme.of(context).textTheme.bodyLarge),
+                      Text('No sales recorded', style: TextStyle(color: Colors.grey[600])),
                     ],
                   ),
                 )
@@ -1095,19 +2171,19 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                           backgroundColor: _getPaymentMethodColor(sale.paymentMethod),
                           child: Icon(_getPaymentMethodIcon(sale.paymentMethod), color: Colors.white, size: 20),
                         ),
-                        title: Text(_currencyFormat.format(sale.amount)),
+                        title: Text(
+                          '+${_currencyFormat.format(sale.amount)} EGP',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                        ),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(sale.paymentMethod.displayName),
                             if (sale.description != null)
-                              Text(sale.description!, style: Theme.of(context).textTheme.bodySmall),
+                              Text(sale.description!, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                           ],
                         ),
-                        trailing: Text(
-                          _timeFormat.format(sale.createdAt),
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                        trailing: Text(_timeFormat.format(sale.createdAt), style: TextStyle(color: Colors.grey[500], fontSize: 12)),
                       ),
                     );
                   },
@@ -1120,32 +2196,42 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   Widget _buildExpensesTab() {
     return Column(
       children: [
-        // Add Expense Button
         Padding(
           padding: const EdgeInsets.all(16),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _recordExpense,
-              icon: const Icon(Icons.add),
-              label: const Text('Record Expense'),
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.red,
+          child: Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: _recordPurchasePayment,
+                  icon: const Icon(Icons.inventory_2),
+                  label: const Text('Purchase'),
+                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _recordExpense,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Expense'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        
-        // Expenses List
         Expanded(
           child: _expenses.isEmpty
               ? Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.money_off, size: 64, color: Theme.of(context).colorScheme.outline),
+                      Icon(Icons.money_off, size: 64, color: Colors.grey[400]),
                       const SizedBox(height: 16),
-                      Text('No expenses recorded', style: Theme.of(context).textTheme.bodyLarge),
+                      Text('No expenses recorded', style: TextStyle(color: Colors.grey[600])),
                     ],
                   ),
                 )
@@ -1160,18 +2246,18 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                           backgroundColor: Colors.red,
                           child: Icon(_getExpenseCategoryIcon(expense.category), color: Colors.white, size: 20),
                         ),
-                        title: Text('-${_currencyFormat.format(expense.amount)}', style: const TextStyle(color: Colors.red)),
+                        title: Text(
+                          '-${_currencyFormat.format(expense.amount)} EGP',
+                          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+                        ),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(expense.category.displayName),
-                            Text(expense.description, style: Theme.of(context).textTheme.bodySmall),
+                            Text(expense.description, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                           ],
                         ),
-                        trailing: Text(
-                          _timeFormat.format(expense.createdAt),
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+                        trailing: Text(_timeFormat.format(expense.createdAt), style: TextStyle(color: Colors.grey[500], fontSize: 12)),
                       ),
                     );
                   },
@@ -1183,52 +2269,117 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
 
   IconData _getPaymentMethodIcon(PaymentMethod method) {
     switch (method) {
-      case PaymentMethod.cash:
-        return Icons.payments;
-      case PaymentMethod.card:
-        return Icons.credit_card;
-      case PaymentMethod.wallet:
-        return Icons.account_balance_wallet;
-      case PaymentMethod.insurance:
-        return Icons.health_and_safety;
-      case PaymentMethod.credit:
-        return Icons.receipt_long;
+      case PaymentMethod.cash: return Icons.payments;
+      case PaymentMethod.card: return Icons.credit_card;
+      case PaymentMethod.wallet: return Icons.account_balance_wallet;
+      case PaymentMethod.insurance: return Icons.health_and_safety;
+      case PaymentMethod.credit: return Icons.receipt_long;
     }
   }
 
   Color _getPaymentMethodColor(PaymentMethod method) {
     switch (method) {
-      case PaymentMethod.cash:
-        return Colors.green;
-      case PaymentMethod.card:
-        return Colors.blue;
-      case PaymentMethod.wallet:
-        return Colors.orange;
-      case PaymentMethod.insurance:
-        return Colors.purple;
-      case PaymentMethod.credit:
-        return Colors.grey;
+      case PaymentMethod.cash: return Colors.green;
+      case PaymentMethod.card: return Colors.blue;
+      case PaymentMethod.wallet: return Colors.orange;
+      case PaymentMethod.insurance: return Colors.purple;
+      case PaymentMethod.credit: return Colors.grey;
     }
   }
 
   IconData _getExpenseCategoryIcon(ExpenseCategory category) {
     switch (category) {
-      case ExpenseCategory.utilities:
-        return Icons.bolt;
-      case ExpenseCategory.supplies:
-        return Icons.inventory;
-      case ExpenseCategory.maintenance:
-        return Icons.build;
-      case ExpenseCategory.shortage:
-        return Icons.warning;
-      case ExpenseCategory.emergency:
-        return Icons.emergency;
-      case ExpenseCategory.transport:
-        return Icons.local_shipping;
-      case ExpenseCategory.staff:
-        return Icons.people;
-      case ExpenseCategory.misc:
-        return Icons.more_horiz;
+      case ExpenseCategory.utilities: return Icons.bolt;
+      case ExpenseCategory.supplies: return Icons.inventory;
+      case ExpenseCategory.maintenance: return Icons.build;
+      case ExpenseCategory.shortage: return Icons.warning;
+      case ExpenseCategory.emergency: return Icons.emergency;
+      case ExpenseCategory.transport: return Icons.local_shipping;
+      case ExpenseCategory.staff: return Icons.people;
+      case ExpenseCategory.misc: return Icons.more_horiz;
     }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPER CLASSES
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum _TimelineType { 
+  sale,        // Regular sales (cash, card, wallet, insurance)
+  expense,     // Regular expenses
+  purchase,    // Purchase payments (supplies category)
+  debtCollection, // Debt/credit collections
+}
+
+class _TimelineItem {
+  final _TimelineType type;
+  final double amount;
+  final String description;
+  final DateTime time;
+  final IconData icon;
+  final Color color;
+  final String? subtitle;
+  
+  _TimelineItem({
+    required this.type,
+    required this.amount,
+    required this.description,
+    required this.time,
+    required this.icon,
+    required this.color,
+    this.subtitle,
+  });
+  
+  /// Check if this is a cash-out transaction
+  bool get isCashOut => type == _TimelineType.expense || type == _TimelineType.purchase;
+  
+  /// Get sign for display
+  String get sign => isCashOut ? '-' : '+';
+}
+
+enum _AlertType { error, warning, info }
+
+class _ShiftAlert {
+  final _AlertType type;
+  final String title;
+  final String message;
+  final IconData icon;
+  
+  _ShiftAlert({
+    required this.type,
+    required this.title,
+    required this.message,
+    required this.icon,
+  });
+}
+
+/// Represents a debt collection (credit sale payment received)
+class _DebtCollection {
+  final String id;
+  final double amount;
+  final String customerName;
+  final String description;
+  final DateTime time;
+  
+  _DebtCollection({
+    required this.id,
+    required this.amount,
+    required this.customerName,
+    required this.description,
+    required this.time,
+  });
+}
+
+/// Extension to get shade colors from any Color
+extension ColorShade on Color {
+  Color get shade700 {
+    final hsl = HSLColor.fromColor(this);
+    return hsl.withLightness((hsl.lightness - 0.1).clamp(0.0, 1.0)).toColor();
+  }
+  
+  Color get shade600 {
+    final hsl = HSLColor.fromColor(this);
+    return hsl.withLightness((hsl.lightness - 0.05).clamp(0.0, 1.0)).toColor();
   }
 }
