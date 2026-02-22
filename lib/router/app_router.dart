@@ -23,6 +23,7 @@ import '../core/security/route_permissions.dart';
 import '../presentation/screens/financial_dashboard_screen.dart';
 import '../presentation/screens/financial_shift_screen.dart';
 import '../presentation/screens/financial_reports_screen.dart';
+import '../presentation/screens/public_shift_screen.dart';
 // PHASE 1: Suppliers UI removed - data layer retained for FK safety
 // import '../presentation/screens/suppliers_screen.dart';
 
@@ -137,6 +138,13 @@ class AppRouter {
       GoRoute(
         path: '/kiosk',
         builder: (context, state) => const KioskScreen(),
+      ),
+      
+      // Public Financial Shift - Kiosk mode for financial operations
+      // Accessible without admin login, requires employee code
+      GoRoute(
+        path: '/public-shift',
+        builder: (context, state) => const PublicShiftScreen(),
       ),
       
       // Login - Admin access
