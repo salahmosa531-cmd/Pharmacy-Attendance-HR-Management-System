@@ -1101,6 +1101,21 @@ class _KioskScreenState extends State<KioskScreen> {
           ),
           const Spacer(),
           
+          // Financial Shift button
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: OutlinedButton.icon(
+              onPressed: () => context.go('/public-shift'),
+              icon: const Icon(Icons.point_of_sale, size: 18),
+              label: const Text('Financial Shift'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.green,
+                side: const BorderSide(color: Colors.green),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+            ),
+          ),
+          
           // Version info - Long-press for admin access
           GestureDetector(
             onLongPress: _showAdminAccessDialog,
