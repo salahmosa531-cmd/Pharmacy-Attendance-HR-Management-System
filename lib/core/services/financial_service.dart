@@ -440,10 +440,20 @@ class FinancialService {
     );
     
     // Sum only payment transactions (cash-out to suppliers)
-    return payments
-        .where((tx) => tx.transactionType == SupplierTransactionType.payment)
-        .fold(0.0, (sum, tx) => sum + tx.amount);
-  }
+    // 2. تصفية المعاملات المطلوبة أولاً وتحويلها إلى قائمة
+    final filteredPayments = payments
+       .where((tx) => tx.transactionType == SupplierTransactionType.payment)
+       .toList();
+    
+    // 3. استخدام حلقة for لمعالجة الـ Future الخاص بكل مبلغ (amount)
+    double total = 0.0;
+    for (var tx in filteredPayments) {
+    // نستخدم await هنا لأن tx.amount هو Future
+     total += await tx.amount; 
+    }
+
+    return total;
+}
   
   /// Get debt collection payments received during a shift period (cash-in component)
   /// 
