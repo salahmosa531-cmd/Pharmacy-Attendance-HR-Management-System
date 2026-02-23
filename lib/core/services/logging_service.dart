@@ -123,7 +123,16 @@ class LoggingService {
         : '$action for employee $employeeId';
     log(LogLevel.info, 'Attendance', message);
   }
-  
+  /// جديد 
+  /// Log an audit event
+  void audit(String module, String action, String messageText, {Map<String, dynamic>? details}) {
+    final String detailsString = details != null ? ' | Details: $details' : '';
+    final String fullMessage = 'Audit: [$module] $action - $messageText$detailsString';
+    
+    // تسجيل في الملف النصي والكونسول
+    log(LogLevel.info, 'Audit', fullMessage);
+  }
+
   /// Write log entry to file
   Future<void> _writeToFile(LogEntry entry) async {
     if (_logFile == null) return;
