@@ -193,7 +193,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       _cashFlowSummary = await _financialService.getShiftCashFlowSummary(_currentShift!.id);
       _sales = await _financialService.getSalesForShift(_currentShift!.id);
       _expenses = await _financialService.getExpensesForShift(_currentShift!.id);
-      _buildTimeline();
+      _generateTimeline();
       
       if (mounted) setState(() {});
     } catch (e) {
@@ -201,7 +201,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     }
   }
   
-  void _buildTimeline() {
+  void _generateTimeline() {
     _timeline = [];
     
     for (final sale in _sales) {
