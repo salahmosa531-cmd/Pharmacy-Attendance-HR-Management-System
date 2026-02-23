@@ -16,3 +16,6 @@ export 'shift_expense_model.dart';
 export 'shift_closure_model.dart';
 export 'supplier_model.dart';
 export 'supplier_transaction_model.dart';
+
+// Safe (Vault) Management models
+export 'safe_balance_model.dart';

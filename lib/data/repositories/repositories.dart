@@ -18,3 +18,6 @@ export 'shift_expense_repository.dart';
 export 'shift_closure_repository.dart';
 export 'supplier_repository.dart';
 export 'supplier_transaction_repository.dart';
+
+// Safe (Vault) Management repositories
+export 'safe_repository.dart';

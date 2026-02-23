@@ -3,6 +3,7 @@ import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
 import '../../data/models/shift_closure_model.dart';
+import '../../data/models/safe_balance_model.dart';
 import '../../data/repositories/financial_shift_repository.dart';
 import '../../data/repositories/shift_sale_repository.dart';
 import '../../data/repositories/shift_expense_repository.dart';
@@ -11,6 +12,7 @@ import '../../data/repositories/supplier_transaction_repository.dart';
 import '../../data/models/supplier_transaction_model.dart';
 import 'logging_service.dart';
 import 'employee_resolver_service.dart';
+import 'safe_service.dart';
 
 /// Financial Service - Orchestrates all shift-level financial operations
 /// 
@@ -32,6 +34,7 @@ class FinancialService {
   final _shiftClosureRepo = ShiftClosureRepository.instance;
   final _supplierTransactionRepo = SupplierTransactionRepository.instance;
   final _employeeResolver = EmployeeResolverService.instance;
+  final _safeService = SafeService.instance;
   final _uuid = const Uuid();
   
   FinancialService._();
@@ -232,13 +235,16 @@ class FinancialService {
   // SHIFT CLOSING OPERATIONS
   // =========================================================================
 
-  /// Close a financial shift with cash count
+  /// Close a financial shift with cash count and Safe transfer
   /// 
   /// This is the critical operation that:
   /// 1. Calculates expected cash (opening + cash sales - expenses)
   /// 2. Records actual cash count
   /// 3. Calculates difference (shortage or overage)
   /// 4. Requires reason if there's a difference
+  /// 5. Transfers actual cash from Drawer to Safe
+  /// 6. Records Safe balance before/after for audit
+  /// 7. Drawer resets to 0 (ready for next shift)
   Future<ShiftClosure> closeShift({
     required String financialShiftId,
     required double actualCash,
@@ -246,6 +252,7 @@ class FinancialService {
     String? differenceReason,
     String? verifiedBy,
     String? notes,
+    String source = 'admin',
   }) async {
     // Get and verify the shift
     final shift = await _financialShiftRepo.getById(financialShiftId);
@@ -272,7 +279,8 @@ class FinancialService {
     final totalCreditSales = salesByMethod[PaymentMethod.credit] ?? 0;
     final totalExpenses = await getTotalExpensesForShift(financialShiftId);
 
-    // Calculate expected cash
+    // Calculate expected cash (Drawer model: starts at 0 + opening cash for change)
+    // opening_cash is the initial change float put in drawer at shift start
     final expectedCash = shift.openingCash + totalCashSales - totalExpenses;
     final difference = actualCash - expectedCash;
 
@@ -285,9 +293,32 @@ class FinancialService {
       );
     }
 
+    // Get Safe balance before transfer
+    final safeBalanceBefore = await _safeService.getCurrentBalance();
+    
+    // Get Safe payments made during this shift (supplier payments from Safe)
+    final safeTransactions = await _safeService.getShiftTransactions(financialShiftId);
+    final safePayments = safeTransactions
+        .where((t) => t.isDebit)
+        .fold(0.0, (sum, t) => sum + t.amount);
+
+    // Calculate amount to transfer to Safe
+    // Transfer the actual cash counted in drawer (minus the opening change float)
+    // The opening cash (change float) stays for next shift, so we transfer: actualCash - openingCash
+    // But in drawer-starts-at-zero model, all actual cash goes to safe
+    final transferToSafe = actualCash > 0 ? actualCash : 0.0;
+
+    // Transfer to Safe
+    final transferResult = await _safeService.transferFromShift(
+      financialShiftId: financialShiftId,
+      amount: transferToSafe,
+      employeeId: closedBy,
+      source: source,
+    );
+
     final now = DateTime.now();
 
-    // Create closure record
+    // Create closure record with Safe details
     final closure = ShiftClosure(
       id: _uuid.v4(),
       financialShiftId: financialShiftId,
@@ -303,6 +334,10 @@ class FinancialService {
       actualCash: actualCash,
       difference: difference,
       differenceReason: differenceReason,
+      safeBalanceBefore: safeBalanceBefore,
+      safeBalanceAfter: transferResult.balanceAfter,
+      transferredToSafe: transferToSafe,
+      safePayments: safePayments,
       closedBy: closedBy,
       verifiedBy: verifiedBy,
       notes: notes,
@@ -316,7 +351,8 @@ class FinancialService {
     LoggingService.instance.info(
       'FinancialService',
       'Closed shift: $financialShiftId, Sales: $totalSales, Expenses: $totalExpenses, '
-      'Expected: $expectedCash, Actual: $actualCash, Difference: $difference',
+      'Expected: $expectedCash, Actual: $actualCash, Difference: $difference, '
+      'Transferred to Safe: $transferToSafe, Safe Balance: ${safeBalanceBefore} → ${transferResult.balanceAfter}',
     );
 
     return closure;
@@ -512,6 +548,80 @@ class FinancialService {
       expectedCash: expectedCash,
     );
   }
+
+  // =========================================================================
+  // SAFE (VAULT) INTEGRATION
+  // =========================================================================
+
+  /// Get current Safe balance
+  Future<double> getSafeBalance() async {
+    return _safeService.getCurrentBalance();
+  }
+
+  /// Pay supplier from Safe (enforces payment source = Safe)
+  /// 
+  /// Throws SafeInsufficientFundsException if insufficient balance.
+  /// This method ensures all supplier payments come from Safe, never Drawer.
+  Future<SafePaymentResult> paySupplierFromSafe({
+    required String supplierId,
+    required double amount,
+    required String description,
+    String? financialShiftId,
+    required String employeeId,
+    String source = 'admin',
+  }) async {
+    return _safeService.paySupplier(
+      supplierId: supplierId,
+      amount: amount,
+      description: description,
+      financialShiftId: financialShiftId,
+      employeeId: employeeId,
+      source: source,
+    );
+  }
+
+  /// Check if Safe has sufficient funds for a payment
+  Future<bool> canPayFromSafe(double amount) async {
+    return _safeService.hasSufficientFunds(amount);
+  }
+
+  /// Get Safe transactions for a shift (for closing summary)
+  Future<List<SafeTransaction>> getSafeTransactionsForShift(String financialShiftId) async {
+    return _safeService.getShiftTransactions(financialShiftId);
+  }
+
+  /// Get closing summary with Safe details
+  Future<ShiftClosingSummary> getClosingSummary(String financialShiftId) async {
+    final summary = await getShiftSummary(financialShiftId);
+    final safeBalance = await _safeService.getCurrentBalance();
+    final safeTransactions = await _safeService.getShiftTransactions(financialShiftId);
+    
+    final safePayments = safeTransactions
+        .where((t) => t.isDebit)
+        .fold(0.0, (sum, t) => sum + t.amount);
+    
+    return ShiftClosingSummary(
+      summary: summary,
+      safeBalanceBefore: safeBalance,
+      safePaymentsDuringShift: safePayments,
+    );
+  }
+}
+
+/// Summary for shift closing with Safe details
+class ShiftClosingSummary {
+  final ShiftSummary summary;
+  final double safeBalanceBefore;
+  final double safePaymentsDuringShift;
+
+  ShiftClosingSummary({
+    required this.summary,
+    required this.safeBalanceBefore,
+    required this.safePaymentsDuringShift,
+  });
+
+  /// Expected Safe balance after closing
+  double get expectedSafeBalanceAfter => safeBalanceBefore + summary.expectedCash;
 }
 
 /// Summary of a financial shift (for display)
