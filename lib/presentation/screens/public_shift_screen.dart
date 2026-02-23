@@ -5,12 +5,14 @@ import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/services/financial_service.dart';
 import '../../core/services/logging_service.dart';
+import '../../core/services/notifications_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
 import '../../data/models/employee_model.dart';
 import '../../data/repositories/employee_repository.dart';
+import '../../data/repositories/shift_repository.dart';
 import '../widgets/purchase_payment_entry_dialog.dart';
 import '../widgets/debt_collection_dialog.dart';
 
@@ -41,6 +43,8 @@ class PublicShiftScreen extends StatefulWidget {
 class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindingObserver {
   final _financialService = FinancialService.instance;
   final _employeeRepo = EmployeeRepository.instance;
+  final _shiftRepo = ShiftRepository.instance;
+  final _notificationsService = NotificationsService.instance;
   
   // Session management
   Employee? _currentEmployee;
@@ -448,6 +452,31 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       return;
     }
     
+    // CHECK SCHEDULE: Verify employee is scheduled for current time
+    final scheduledShift = await _shiftRepo.getEmployeeCurrentScheduledShift(employee.id);
+    String? scheduleNote;
+    
+    if (scheduledShift == null) {
+      // Employee is NOT scheduled - show warning and allow opening only if no one is scheduled
+      final scheduledEmployees = await _shiftRepo.getScheduledEmployeesForCurrentShift('1');
+      
+      if (scheduledEmployees.isNotEmpty && !scheduledEmployees.contains(employee.id)) {
+        // Show warning - opening outside schedule
+        final confirmed = await _showUnscheduledOpeningDialog(employee);
+        if (confirmed != true) return;
+        scheduleNote = 'Opened outside schedule (not assigned)';
+        
+        // Add notification about unscheduled opening
+        _notificationsService.addSmartWarning(
+          title: 'Unscheduled Shift Opening',
+          message: '${employee.fullName} opened shift outside their schedule',
+          severity: NotificationSeverity.warning,
+        );
+      }
+    } else {
+      scheduleNote = 'Scheduled for ${scheduledShift.name} (${scheduledShift.timeRange})';
+    }
+    
     // Get opening cash
     final openingCash = await _showOpeningCashDialog();
     if (openingCash == null) return;
@@ -455,10 +484,15 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     setState(() => _isProcessing = true);
     
     try {
+      final notes = scheduleNote != null
+          ? 'Opened from kiosk by ${employee.fullName}. $scheduleNote'
+          : 'Opened from kiosk by ${employee.fullName}';
+          
       _currentShift = await _financialService.openShift(
         employeeId: employee.id,
+        shiftId: scheduledShift?.id,
         openingCash: openingCash,
-        notes: 'Opened from kiosk by ${employee.fullName}',
+        notes: notes,
       );
       
       LoggingService.instance.audit(
@@ -471,6 +505,9 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
           'employee_code': employee.employeeCode,
           'opening_cash': openingCash,
           'source': 'kiosk',
+          'scheduled_shift_id': scheduledShift?.id,
+          'scheduled_shift_name': scheduledShift?.name,
+          'is_scheduled': scheduledShift != null,
           'timestamp': DateTime.now().toIso8601String(),
         },
       );
@@ -501,6 +538,76 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     }
     
     if (mounted) setState(() => _isProcessing = false);
+  }
+  
+  /// Show warning dialog when opening shift outside schedule
+  Future<bool?> _showUnscheduledOpeningDialog(Employee employee) async {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.warning_amber, color: Colors.orange),
+            ),
+            const SizedBox(width: 12),
+            const Text('Not Scheduled'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${employee.fullName} is not scheduled for the current shift.',
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Opening outside schedule will be logged for admin review.',
+                      style: TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Do you want to continue?',
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Open Anyway'),
+          ),
+        ],
+      ),
+    );
   }
   
   Future<double?> _showOpeningCashDialog() async {

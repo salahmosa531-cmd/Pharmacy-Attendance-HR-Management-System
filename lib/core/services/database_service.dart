@@ -622,6 +622,56 @@ class DatabaseService {
     batch.execute('CREATE INDEX idx_supplier_transactions_date ON supplier_transactions(created_at)');
     batch.execute('CREATE INDEX idx_supplier_transactions_type ON supplier_transactions(transaction_type)');
     
+    // =========================================================================
+    // SAFE (VAULT) MANAGEMENT TABLES (v4)
+    // =========================================================================
+    
+    // Safe Balances - Tracks the pharmacy Safe (Vault) balance per branch
+    // Only one record per branch, balance persists across shifts
+    batch.execute('''
+      CREATE TABLE safe_balances (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL UNIQUE,
+        balance REAL NOT NULL DEFAULT 0,
+        last_updated_at TEXT NOT NULL,
+        last_updated_by TEXT,
+        last_transaction_id TEXT,
+        created_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (last_updated_by) REFERENCES employees(id) ON DELETE SET NULL
+      )
+    ''');
+    
+    // Safe Transactions - Audit log of all movements into/out of the Safe
+    batch.execute('''
+      CREATE TABLE safe_transactions (
+        id TEXT PRIMARY KEY,
+        branch_id TEXT NOT NULL,
+        financial_shift_id TEXT,
+        transaction_type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        balance_before REAL NOT NULL,
+        balance_after REAL NOT NULL,
+        reference_id TEXT,
+        reference_type TEXT,
+        description TEXT NOT NULL,
+        recorded_by TEXT,
+        source TEXT NOT NULL DEFAULT 'system',
+        created_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE SET NULL,
+        FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL
+      )
+    ''');
+    
+    // Safe indexes
+    batch.execute('CREATE INDEX idx_safe_transactions_branch ON safe_transactions(branch_id)');
+    batch.execute('CREATE INDEX idx_safe_transactions_shift ON safe_transactions(financial_shift_id)');
+    batch.execute('CREATE INDEX idx_safe_transactions_type ON safe_transactions(transaction_type)');
+    batch.execute('CREATE INDEX idx_safe_transactions_date ON safe_transactions(created_at)');
+    
     await batch.commit(noResult: true);
     
     // SINGLE-BRANCH ARCHITECTURE: Auto-create default branch with id = '1'
@@ -677,6 +727,11 @@ class DatabaseService {
     // Migration v2 -> v3: Add Financial Management tables
     if (oldVersion < 3) {
       await _migrateToV3(db);
+    }
+    
+    // Migration v3 -> v4: Add Safe (Vault) Management tables
+    if (oldVersion < 4) {
+      await _migrateToV4(db);
     }
     
     // Migration v3 -> v4: Employee-User integrity enhancements
@@ -868,6 +923,74 @@ class DatabaseService {
     await _safeCreateIndex(db, 'idx_supplier_transactions_type', 'supplier_transactions', 'transaction_type');
     
     _logMigration('v3 migration completed: Financial Management System tables created');
+  }
+  
+  /// Migration to v4: Add Safe (Vault) Management tables
+  Future<void> _migrateToV4(Database db) async {
+    _logMigration('Starting v4 migration: Safe (Vault) Management System');
+    
+    // Create safe_balances table if not exists
+    if (!await _tableExists(db, 'safe_balances')) {
+      _logMigration('Creating safe_balances table');
+      await db.execute('''
+        CREATE TABLE safe_balances (
+          id TEXT PRIMARY KEY,
+          branch_id TEXT NOT NULL UNIQUE,
+          balance REAL NOT NULL DEFAULT 0,
+          last_updated_at TEXT NOT NULL,
+          last_updated_by TEXT,
+          last_transaction_id TEXT,
+          created_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (last_updated_by) REFERENCES employees(id) ON DELETE SET NULL
+        )
+      ''');
+    }
+    
+    // Create safe_transactions table if not exists
+    if (!await _tableExists(db, 'safe_transactions')) {
+      _logMigration('Creating safe_transactions table');
+      await db.execute('''
+        CREATE TABLE safe_transactions (
+          id TEXT PRIMARY KEY,
+          branch_id TEXT NOT NULL,
+          financial_shift_id TEXT,
+          transaction_type TEXT NOT NULL,
+          amount REAL NOT NULL,
+          balance_before REAL NOT NULL,
+          balance_after REAL NOT NULL,
+          reference_id TEXT,
+          reference_type TEXT,
+          description TEXT NOT NULL,
+          recorded_by TEXT,
+          source TEXT NOT NULL DEFAULT 'system',
+          created_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE SET NULL,
+          FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL
+        )
+      ''');
+    }
+    
+    // Create indexes for safe tables
+    _logMigration('Creating indexes for safe tables');
+    await _safeCreateIndex(db, 'idx_safe_transactions_branch', 'safe_transactions', 'branch_id');
+    await _safeCreateIndex(db, 'idx_safe_transactions_shift', 'safe_transactions', 'financial_shift_id');
+    await _safeCreateIndex(db, 'idx_safe_transactions_type', 'safe_transactions', 'transaction_type');
+    await _safeCreateIndex(db, 'idx_safe_transactions_date', 'safe_transactions', 'created_at');
+    
+    // Add safe-related columns to shift_closures if they don't exist
+    await _safeAddColumn(db, tableName: 'shift_closures', columnName: 'safe_balance_before', columnType: 'REAL', defaultValue: '0');
+    await _safeAddColumn(db, tableName: 'shift_closures', columnName: 'safe_balance_after', columnType: 'REAL', defaultValue: '0');
+    await _safeAddColumn(db, tableName: 'shift_closures', columnName: 'transferred_to_safe', columnType: 'REAL', defaultValue: '0');
+    await _safeAddColumn(db, tableName: 'shift_closures', columnName: 'safe_payments', columnType: 'REAL', defaultValue: '0');
+    
+    // Add payment_source to supplier_transactions if it doesn't exist
+    await _safeAddColumn(db, tableName: 'supplier_transactions', columnName: 'payment_source', columnType: 'TEXT', defaultValue: "'safe'");
+    
+    _logMigration('v4 migration completed: Safe (Vault) Management System tables created');
   }
   
   /// Migration for Employee-User integrity

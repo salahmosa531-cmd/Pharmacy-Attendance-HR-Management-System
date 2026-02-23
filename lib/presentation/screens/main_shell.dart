@@ -3,11 +3,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/services/auth_service.dart';
+import '../../core/services/notifications_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/app_localizations.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/security/route_permissions.dart';
 import '../providers/app_state_provider.dart';
+import '../widgets/notifications_panel.dart';
 
 /// Main shell with navigation rail for the application
 class MainShell extends StatefulWidget {
@@ -519,16 +521,14 @@ class _MainShellState extends State<MainShell> {
                       
                       const SizedBox(width: 8),
                       
-                      // Notifications (placeholder)
-                      IconButton(
-                        icon: Badge(
-                          label: const Text('3'),
-                          child: const Icon(Icons.notifications_outlined),
+                      // Notifications
+                      NotificationBadge(
+                        onTap: () => showNotificationsPanel(context),
+                        child: IconButton(
+                          icon: const Icon(Icons.notifications_outlined),
+                          tooltip: 'Notifications',
+                          onPressed: () => showNotificationsPanel(context),
                         ),
-                        tooltip: 'Notifications',
-                        onPressed: () {
-                          // TODO: Show notifications
-                        },
                       ),
                     ],
                   ),

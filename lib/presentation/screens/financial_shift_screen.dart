@@ -5,6 +5,7 @@ import '../../core/services/financial_service.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/employee_resolver_service.dart';
 import '../../core/services/logging_service.dart';
+import '../../core/services/notifications_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
@@ -36,6 +37,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   final _authService = AuthService.instance;
   final _employeeResolver = EmployeeResolverService.instance;
   final _employeeRepo = EmployeeRepository.instance;
+  final _notificationsService = NotificationsService.instance;
   
   late TabController _tabController;
   
@@ -191,6 +193,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   }
   
   /// Get smart alerts based on current shift state
+  /// Also pushes alerts to the Notifications service for persistence
   List<_ShiftAlert> _getSmartAlerts() {
     if (_shiftSummary == null || _currentShift == null) return [];
     
@@ -199,35 +202,41 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     
     // Alert 1: No sales after 1 hour
     if (_sales.isEmpty && shiftDuration.inHours >= 1) {
-      alerts.add(_ShiftAlert(
+      final alert = _ShiftAlert(
         type: _AlertType.warning,
         title: 'No Sales Recorded',
         message: 'Shift has been open for ${shiftDuration.inHours}h without any sales',
         icon: Icons.trending_flat,
-      ));
+      );
+      alerts.add(alert);
+      _pushAlertToNotifications(alert, _currentShift!.id);
     }
     
     // Alert 2: High expenses ratio (> 50% of sales)
     if (_shiftSummary!.totalSales > 0) {
       final expenseRatio = _shiftSummary!.totalExpenses / _shiftSummary!.totalSales;
       if (expenseRatio > 0.5) {
-        alerts.add(_ShiftAlert(
+        final alert = _ShiftAlert(
           type: _AlertType.warning,
           title: 'High Expenses',
           message: 'Expenses are ${(expenseRatio * 100).toStringAsFixed(0)}% of sales',
           icon: Icons.trending_down,
-        ));
+        );
+        alerts.add(alert);
+        _pushAlertToNotifications(alert, _currentShift!.id);
       }
     }
     
     // Alert 3: Negative expected cash
     if (_shiftSummary!.expectedCash < 0) {
-      alerts.add(_ShiftAlert(
+      final alert = _ShiftAlert(
         type: _AlertType.error,
         title: 'Negative Balance',
         message: 'Expected cash is negative: ${_currencyFormat.format(_shiftSummary!.expectedCash)} EGP',
         icon: Icons.warning,
-      ));
+      );
+      alerts.add(alert);
+      _pushAlertToNotifications(alert, _currentShift!.id, isCritical: true);
     }
     
     // Alert 4: Cash only warning (no card sales)
@@ -244,6 +253,29 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     }
     
     return alerts;
+  }
+  
+  /// Push an alert to the notifications service
+  void _pushAlertToNotifications(_ShiftAlert alert, String shiftId, {bool isCritical = false}) {
+    NotificationSeverity severity;
+    switch (alert.type) {
+      case _AlertType.info:
+        severity = NotificationSeverity.info;
+        break;
+      case _AlertType.warning:
+        severity = NotificationSeverity.warning;
+        break;
+      case _AlertType.error:
+        severity = isCritical ? NotificationSeverity.critical : NotificationSeverity.error;
+        break;
+    }
+    
+    _notificationsService.addSmartWarning(
+      title: alert.title,
+      message: alert.message,
+      severity: severity,
+      shiftId: shiftId,
+    );
   }
 
   Future<void> _openShift() async {
@@ -823,12 +855,21 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     final notesController = TextEditingController();
     double? enteredCash;
     double difference = 0;
+    double safeBalance = 0;
+    
+    // Get current Safe balance
+    try {
+      safeBalance = await _financialService.getSafeBalance();
+    } catch (e) {
+      // Safe balance fetch failed, continue with 0
+    }
     
     return showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           final expectedCash = _shiftSummary?.expectedCash ?? 0;
+          final expectedSafeAfter = safeBalance + (enteredCash ?? 0);
           
           return AlertDialog(
             title: Row(
@@ -864,6 +905,71 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
                         _buildDialogSummaryRow('- Expenses', _shiftSummary?.totalExpenses ?? 0, Icons.remove_circle, color: Colors.red),
                         const Divider(height: 24),
                         _buildDialogSummaryRow('= Expected', expectedCash, Icons.calculate, isBold: true, color: AppTheme.primaryColor),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  // Safe Balance Info Card
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.indigo.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.indigo.withOpacity(0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.lock, size: 18, color: Colors.indigo[700]),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Safe (Vault)',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.indigo[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Current Balance:'),
+                            Text(
+                              '${_currencyFormat.format(safeBalance)} EGP',
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                        if (enteredCash != null) ...[
+                          const SizedBox(height: 4),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('After Transfer:'),
+                              Text(
+                                '${_currencyFormat.format(expectedSafeAfter)} EGP',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.indigo[700],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Cash will be transferred to Safe, Drawer resets to 0',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[600],
+                              fontStyle: FontStyle.italic,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),

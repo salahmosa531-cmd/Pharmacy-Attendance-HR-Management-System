@@ -191,4 +191,68 @@ class ShiftRepository extends BaseRepository<Shift> {
       endDate.toIso8601String().split('T')[0],
     ]);
   }
+  
+  /// Check if an employee is scheduled for the current time
+  /// Returns the scheduled shift if within shift window, null otherwise
+  Future<Shift?> getEmployeeCurrentScheduledShift(String employeeId) async {
+    final now = DateTime.now();
+    final currentTime = TimeOfDay.fromDateTime(now);
+    
+    // Get employee's shift for today
+    final shift = await getEmployeeShiftForDate(employeeId, now);
+    
+    if (shift == null) return null;
+    
+    // Check if current time is within the shift window (including grace period)
+    if (shift.isTimeWithinShift(currentTime, includeGrace: true)) {
+      return shift;
+    }
+    
+    return null;
+  }
+  
+  /// Get employees scheduled for a specific shift at current time
+  Future<List<String>> getScheduledEmployeesForCurrentShift(String branchId) async {
+    final now = DateTime.now();
+    final currentTime = TimeOfDay.fromDateTime(now);
+    final todayDate = now.toIso8601String().split('T')[0];
+    final db = await database;
+    
+    // Get the current shift based on time
+    final currentShift = await getCurrentShift(branchId, currentTime);
+    if (currentShift == null) return [];
+    
+    // Find employees with daily overrides to this shift today
+    final overrideResults = await db.rawQuery('''
+      SELECT DISTINCT e.id
+      FROM employees e
+      INNER JOIN employee_shift_assignments esa ON e.id = esa.employee_id
+      WHERE e.branch_id = ?
+        AND esa.shift_id = ?
+        AND esa.date = ?
+        AND e.is_active = 1
+    ''', [branchId, currentShift.id, todayDate]);
+    
+    // Find employees with this shift as their default assigned shift
+    final defaultResults = await db.rawQuery('''
+      SELECT DISTINCT e.id
+      FROM employees e
+      WHERE e.branch_id = ?
+        AND e.assigned_shift_id = ?
+        AND e.is_active = 1
+        AND e.id NOT IN (
+          SELECT employee_id FROM employee_shift_assignments WHERE date = ?
+        )
+    ''', [branchId, currentShift.id, todayDate]);
+    
+    final employeeIds = <String>{};
+    for (final row in overrideResults) {
+      employeeIds.add(row['id'] as String);
+    }
+    for (final row in defaultResults) {
+      employeeIds.add(row['id'] as String);
+    }
+    
+    return employeeIds.toList();
+  }
 }

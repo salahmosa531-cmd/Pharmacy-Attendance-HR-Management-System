@@ -6,6 +6,7 @@ import 'core/services/database_service.dart';
 import 'core/services/settings_service.dart';
 import 'core/services/logging_service.dart';
 import 'core/services/auth_service.dart';
+import 'core/services/notifications_service.dart';
 import 'app.dart';
 
 void main() async {
@@ -59,6 +60,10 @@ void main() async {
   // Initialize settings service (no branch context needed)
   await SettingsService.instance.initialize();
   LoggingService.instance.info('App', 'Settings service initialized');
+  
+  // Initialize notifications service
+  await NotificationsService.instance.initialize();
+  LoggingService.instance.info('App', 'Notifications service initialized');
   
   // Restore persisted admin session per auth policy
   await AuthService.instance.initializeSession();
