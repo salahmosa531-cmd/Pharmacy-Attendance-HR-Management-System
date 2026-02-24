@@ -672,6 +672,34 @@ class DatabaseService {
     batch.execute('CREATE INDEX idx_safe_transactions_type ON safe_transactions(transaction_type)');
     batch.execute('CREATE INDEX idx_safe_transactions_date ON safe_transactions(created_at)');
     
+    // =========================================================================
+    // SYNC QUEUE TABLE (v5) - Cloud Migration Support
+    // =========================================================================
+    
+    // Sync Queue - Queues financial operations for cloud sync when online
+    // SQLite remains primary source, this enables eventual cloud backup
+    batch.execute('''
+      CREATE TABLE sync_queue (
+        id TEXT PRIMARY KEY,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        priority INTEGER DEFAULT 0,
+        is_synced INTEGER DEFAULT 0,
+        retry_count INTEGER DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        synced_at TEXT,
+        UNIQUE(entity_type, entity_id, action)
+      )
+    ''');
+    
+    // Sync queue indexes
+    batch.execute('CREATE INDEX idx_sync_queue_status ON sync_queue(is_synced)');
+    batch.execute('CREATE INDEX idx_sync_queue_entity ON sync_queue(entity_type, entity_id)');
+    batch.execute('CREATE INDEX idx_sync_queue_priority ON sync_queue(priority DESC, created_at ASC)');
+    
     await batch.commit(noResult: true);
     
     // SINGLE-BRANCH ARCHITECTURE: Auto-create default branch with id = '1'
@@ -732,6 +760,11 @@ class DatabaseService {
     // Migration v3 -> v4: Add Safe (Vault) Management tables
     if (oldVersion < 4) {
       await _migrateToV4(db);
+    }
+    
+    // Migration v4 -> v5: Add sync_queue for cloud migration
+    if (oldVersion < 5) {
+      await _migrateToV5(db);
     }
     
     // Migration v3 -> v4: Employee-User integrity enhancements
@@ -991,6 +1024,39 @@ class DatabaseService {
     await _safeAddColumn(db, tableName: 'supplier_transactions', columnName: 'payment_source', columnType: 'TEXT', defaultValue: "'safe'");
     
     _logMigration('v4 migration completed: Safe (Vault) Management System tables created');
+  }
+  
+  /// Migration to v5: Add sync_queue table for Cloud migration
+  Future<void> _migrateToV5(Database db) async {
+    _logMigration('Starting v5 migration: Cloud Sync Queue');
+    
+    // Create sync_queue table if not exists
+    if (!await _tableExists(db, 'sync_queue')) {
+      _logMigration('Creating sync_queue table');
+      await db.execute('''
+        CREATE TABLE sync_queue (
+          id TEXT PRIMARY KEY,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          action TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          priority INTEGER DEFAULT 0,
+          is_synced INTEGER DEFAULT 0,
+          retry_count INTEGER DEFAULT 0,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          synced_at TEXT,
+          UNIQUE(entity_type, entity_id, action)
+        )
+      ''');
+    }
+    
+    // Create indexes for sync_queue
+    _logMigration('Creating indexes for sync_queue table');
+    await _safeCreateIndex(db, 'idx_sync_queue_status', 'sync_queue', 'is_synced');
+    await _safeCreateIndex(db, 'idx_sync_queue_priority', 'sync_queue', 'priority');
+    
+    _logMigration('v5 migration completed: Cloud Sync Queue table created');
   }
   
   /// Migration for Employee-User integrity

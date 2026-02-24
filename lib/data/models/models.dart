@@ -19,3 +19,6 @@ export 'supplier_transaction_model.dart';
 
 // Safe (Vault) Management models
 export 'safe_balance_model.dart';
+
+// Sync Queue models (Cloud Migration)
+export 'sync_queue_model.dart';

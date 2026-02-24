@@ -21,3 +21,6 @@ export 'supplier_transaction_repository.dart';
 
 // Safe (Vault) Management repositories
 export 'safe_repository.dart';
+
+// Sync Queue repositories (Cloud Migration)
+export 'sync_queue_repository.dart';

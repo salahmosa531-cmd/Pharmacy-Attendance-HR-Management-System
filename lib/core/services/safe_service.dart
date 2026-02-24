@@ -577,3 +577,18 @@ class SafePaymentException implements Exception {
   @override
   String toString() => 'SafePaymentException: $message${code != null ? ' [$code]' : ''}';
 }
+
+/// Exception for insufficient Safe funds
+class SafeInsufficientFundsException extends SafePaymentException {
+  final double available;
+  final double required;
+
+  SafeInsufficientFundsException(
+    super.message, {
+    required this.available,
+    required this.required,
+  }) : super(code: 'INSUFFICIENT_FUNDS');
+
+  @override
+  String toString() => 'SafeInsufficientFundsException: $message (Available: $available, Required: $required)';
+}

@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/services/financial_service.dart';
 import '../../core/services/logging_service.dart';
 import '../../core/services/notifications_service.dart';
+import '../../core/services/safe_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
@@ -45,6 +46,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   final _employeeRepo = EmployeeRepository.instance;
   final _shiftRepo = ShiftRepository.instance;
   final _notificationsService = NotificationsService.instance;
+  final _safeService = SafeService.instance;
   
   // Session management
   Employee? _currentEmployee;
@@ -452,19 +454,32 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       return;
     }
     
-    // CHECK SCHEDULE: Verify employee is scheduled for current time
+    // [SCHEDULE_CHECK] Verify employee is scheduled for current time
+    LoggingService.instance.info(
+      'PublicShift',
+      '[SCHEDULE_CHECK] Checking schedule for employee ${employee.employeeCode}',
+    );
+    
     final scheduledShift = await _shiftRepo.getEmployeeCurrentScheduledShift(employee.id);
     String? scheduleNote;
+    bool isScheduledOpening = true;
     
     if (scheduledShift == null) {
-      // Employee is NOT scheduled - show warning and allow opening only if no one is scheduled
+      // Employee is NOT scheduled - show warning and log unscheduled opening
+      isScheduledOpening = false;
       final scheduledEmployees = await _shiftRepo.getScheduledEmployeesForCurrentShift('1');
+      
+      LoggingService.instance.warning(
+        'PublicShift',
+        '[SCHEDULE_CHECK] Employee ${employee.employeeCode} is NOT scheduled for current time. '
+        'Scheduled employees: ${scheduledEmployees.length}',
+      );
       
       if (scheduledEmployees.isNotEmpty && !scheduledEmployees.contains(employee.id)) {
         // Show warning - opening outside schedule
         final confirmed = await _showUnscheduledOpeningDialog(employee);
         if (confirmed != true) return;
-        scheduleNote = 'Opened outside schedule (not assigned)';
+        scheduleNote = 'UNSCHEDULED: Opened outside schedule (not assigned)';
         
         // Add notification about unscheduled opening
         _notificationsService.addSmartWarning(
@@ -472,21 +487,46 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
           message: '${employee.fullName} opened shift outside their schedule',
           severity: NotificationSeverity.warning,
         );
+        
+        // Log the unscheduled opening audit
+        LoggingService.instance.audit(
+          'PublicShift',
+          'UNSCHEDULED_SHIFT_OPENING',
+          '[SCHEDULE_CHECK] Employee ${employee.employeeCode} opening shift outside schedule',
+          details: {
+            'employee_id': employee.id,
+            'employee_code': employee.employeeCode,
+            'employee_name': employee.fullName,
+            'scheduled_employees_count': scheduledEmployees.length,
+            'is_scheduled': false,
+            'source': 'kiosk',
+            'timestamp': DateTime.now().toIso8601String(),
+          },
+        );
+      } else {
+        scheduleNote = 'No active schedule - manual opening';
       }
     } else {
       scheduleNote = 'Scheduled for ${scheduledShift.name} (${scheduledShift.timeRange})';
+      LoggingService.instance.info(
+        'PublicShift',
+        '[SCHEDULE_CHECK] Employee ${employee.employeeCode} is scheduled for ${scheduledShift.name}',
+      );
     }
     
-    // Get opening cash
+    // DRAWER ENFORCEMENT: Opening cash is change float only
+    // Drawer starts conceptually at 0, opening cash is just the change float put in
     final openingCash = await _showOpeningCashDialog();
     if (openingCash == null) return;
     
     setState(() => _isProcessing = true);
     
     try {
-      final notes = scheduleNote != null
-          ? 'Opened from kiosk by ${employee.fullName}. $scheduleNote'
-          : 'Opened from kiosk by ${employee.fullName}';
+      final notes = [
+        'Opened from kiosk by ${employee.fullName}',
+        if (scheduleNote != null) scheduleNote,
+        '[DRAWER_START] Drawer initialized with ${openingCash.toStringAsFixed(2)} EGP change float',
+      ].join('. ');
           
       _currentShift = await _financialService.openShift(
         employeeId: employee.id,
@@ -498,16 +538,18 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       LoggingService.instance.audit(
         'PublicShift',
         'SHIFT_OPENED',
-        'Employee ${employee.employeeCode} opened shift ${_currentShift!.id} with ${openingCash} EGP',
+        '[DRAWER_START] Employee ${employee.employeeCode} opened shift ${_currentShift!.id}',
         details: {
           'shift_id': _currentShift!.id,
           'employee_id': employee.id,
           'employee_code': employee.employeeCode,
           'opening_cash': openingCash,
+          'drawer_initial_balance': 0, // Drawer conceptually starts at 0
+          'change_float': openingCash, // Opening cash is the change float
           'source': 'kiosk',
           'scheduled_shift_id': scheduledShift?.id,
           'scheduled_shift_name': scheduledShift?.name,
-          'is_scheduled': scheduledShift != null,
+          'is_scheduled': isScheduledOpening,
           'timestamp': DateTime.now().toIso8601String(),
         },
       );
@@ -676,23 +718,68 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     final employee = await _verifyEmployee();
     if (employee == null) return;
     
-    // Show close dialog
-    final result = await _showCloseShiftDialog();
+    // Get Safe balance before close for UI display
+    final safeBalanceBefore = await _safeService.getCurrentBalance();
+    
+    // Show close dialog with Safe info
+    final result = await _showCloseShiftDialog(safeBalanceBefore: safeBalanceBefore);
     if (result == null) return;
     
     setState(() => _isProcessing = true);
     
     try {
-      await _financialService.closeShift(
+      final actualCash = result['actualCash'] as double;
+      
+      // Close shift - this internally calls SafeService.transferFromShift()
+      final closure = await _financialService.closeShift(
         financialShiftId: _currentShift!.id,
-        actualCash: result['actualCash'] as double,
+        actualCash: actualCash,
         closedBy: employee.id,
         differenceReason: result['reason'] as String?,
         notes: 'Closed from kiosk by ${employee.fullName}',
+        source: 'kiosk',
       );
       
-      final difference = (result['actualCash'] as double) - (_shiftSummary?.expectedCash ?? 0);
+      final difference = actualCash - (_shiftSummary?.expectedCash ?? 0);
       
+      // [SAFE_TRANSFER] Log the Safe transfer details
+      LoggingService.instance.audit(
+        'PublicShift',
+        'SAFE_TRANSFER',
+        '[SAFE_TRANSFER] Transferred ${closure.transferredToSafe.toStringAsFixed(2)} EGP from Drawer to Safe',
+        details: {
+          'shift_id': _currentShift!.id,
+          'employee_id': employee.id,
+          'employee_code': employee.employeeCode,
+          'transferred_amount': closure.transferredToSafe,
+          'safe_balance_before': closure.safeBalanceBefore,
+          'safe_balance_after': closure.safeBalanceAfter,
+          'safe_payments_during_shift': closure.safePayments,
+          'payment_source': 'drawer_to_safe',
+          'source': 'kiosk',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+      
+      // [DRAWER_RESET] Log the drawer reset
+      LoggingService.instance.audit(
+        'PublicShift',
+        'DRAWER_RESET',
+        '[DRAWER_RESET] Drawer reset to 0 after shift close. Cash transferred to Safe.',
+        details: {
+          'shift_id': _currentShift!.id,
+          'employee_id': employee.id,
+          'employee_code': employee.employeeCode,
+          'drawer_final_cash': actualCash,
+          'drawer_reset_to': 0,
+          'expected_cash': _shiftSummary?.expectedCash,
+          'difference': difference,
+          'source': 'kiosk',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+      
+      // Main shift closure audit
       LoggingService.instance.audit(
         'PublicShift',
         'SHIFT_CLOSED',
@@ -701,10 +788,15 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
           'shift_id': _currentShift!.id,
           'employee_id': employee.id,
           'employee_code': employee.employeeCode,
-          'actual_cash': result['actualCash'],
+          'actual_cash': actualCash,
           'expected_cash': _shiftSummary?.expectedCash,
           'difference': difference,
           'difference_reason': result['reason'],
+          'total_sales': closure.totalSales,
+          'total_expenses': closure.totalExpenses,
+          'safe_balance_before': closure.safeBalanceBefore,
+          'safe_balance_after': closure.safeBalanceAfter,
+          'transferred_to_safe': closure.transferredToSafe,
           'source': 'kiosk',
           'timestamp': DateTime.now().toIso8601String(),
         },
@@ -717,14 +809,20 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
               children: [
                 const Icon(Icons.check_circle, color: Colors.white),
                 const SizedBox(width: 8),
-                Text('Shift closed by ${employee.fullName}'),
+                Expanded(
+                  child: Text(
+                    'Shift closed. ${closure.transferredToSafe.toStringAsFixed(2)} EGP transferred to Safe.',
+                  ),
+                ),
               ],
             ),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
           ),
         );
       }
       
+      // Reset all shift-related state
       _currentShift = null;
       _shiftSummary = null;
       _cashFlowSummary = null;
@@ -743,12 +841,13 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     if (mounted) setState(() => _isProcessing = false);
   }
   
-  Future<Map<String, dynamic>?> _showCloseShiftDialog() async {
+  Future<Map<String, dynamic>?> _showCloseShiftDialog({double safeBalanceBefore = 0}) async {
     final actualCashController = TextEditingController();
     final reasonController = TextEditingController();
     double? enteredCash;
     double difference = 0;
     final expectedCash = _shiftSummary?.expectedCash ?? 0;
+    final currencyFormat = _currencyFormat;
     
     return showDialog<Map<String, dynamic>>(
       context: context,
@@ -772,7 +871,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Summary
+                // Drawer Summary
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -780,12 +879,62 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildCloseDialogRow('Opening Cash', _currentShift?.openingCash ?? 0, Icons.account_balance_wallet),
+                      const Text('Drawer Summary', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      const SizedBox(height: 8),
+                      _buildCloseDialogRow('Opening Cash (Float)', _currentShift?.openingCash ?? 0, Icons.account_balance_wallet),
                       _buildCloseDialogRow('+ Cash Sales', _shiftSummary?.cashSales ?? 0, Icons.add_circle, color: Colors.green),
                       _buildCloseDialogRow('- Expenses', _shiftSummary?.totalExpenses ?? 0, Icons.remove_circle, color: Colors.red),
                       const Divider(height: 20),
-                      _buildCloseDialogRow('= Expected', expectedCash, Icons.calculate, isBold: true, color: AppTheme.primaryColor),
+                      _buildCloseDialogRow('= Expected in Drawer', expectedCash, Icons.calculate, isBold: true, color: AppTheme.primaryColor),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                
+                // Safe Summary
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.lock, size: 16, color: Colors.blue),
+                          const SizedBox(width: 6),
+                          const Text('Safe (Vault)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue)),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Current Balance:', style: TextStyle(fontSize: 12)),
+                          Text(
+                            '${currencyFormat.format(safeBalanceBefore)} EGP',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                      if (enteredCash != null) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('After Transfer:', style: TextStyle(fontSize: 12)),
+                            Text(
+                              '${currencyFormat.format(safeBalanceBefore + (enteredCash ?? 0))} EGP',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.green),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -804,6 +953,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                     prefixIcon: Icon(Icons.point_of_sale),
                     border: OutlineInputBorder(),
                     suffixText: 'EGP',
+                    helperText: 'This amount will be transferred to Safe',
                   ),
                   onChanged: (value) {
                     setDialogState(() {
@@ -879,6 +1029,28 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                     maxLines: 2,
                   ),
                 ],
+                
+                // Drawer reset notice
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 18, color: Colors.orange),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Drawer will be reset to 0 after closing. Cash transfers to Safe.',
+                          style: TextStyle(fontSize: 11, color: Colors.orange),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
