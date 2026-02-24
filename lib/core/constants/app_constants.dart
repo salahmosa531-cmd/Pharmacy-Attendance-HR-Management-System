@@ -7,7 +7,7 @@ class AppConstants {
   
   // Database
   static const String databaseName = 'pharmacy_attendance.db';
-  static const int databaseVersion = 4; // v4: Added Safe (Vault) management tables
+  static const int databaseVersion = 5; // v5: Added sync_queue for cloud migration
   
   // Subscription/Trial
   static const int trialPeriodDays = 30;
