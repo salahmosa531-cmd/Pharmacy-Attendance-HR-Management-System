@@ -19,6 +19,11 @@ import 'safe_service.dart';
 /// SINGLE-BRANCH ARCHITECTURE: All operations use hardcoded branch_id = '1'
 /// Branch context validation has been removed for offline-first single-branch mode.
 /// 
+/// SCHEDULE-DRIVEN ARCHITECTURE:
+/// - Financial shifts are linked to scheduled shifts
+/// - Schedule context is stored for audit and display
+/// - Employee validation based on schedule is performed in UI layer
+/// 
 /// Handles:
 /// - Opening/closing financial shifts
 /// - Recording sales and expenses
@@ -43,20 +48,35 @@ class FinancialService {
   // FINANCIAL SHIFT OPERATIONS
   // =========================================================================
 
-  /// Open a new financial shift
+  /// Open a new financial shift with schedule context
   /// 
-  /// Throws if employee already has an open shift
+  /// Parameters:
+  /// - employeeId: ID of the employee opening the shift
+  /// - employeeName: Name for display and audit
+  /// - shiftId: Optional link to attendance shift (legacy)
+  /// - scheduledShiftId: ID of the scheduled shift
+  /// - scheduledShiftName: Name of the scheduled shift for display
+  /// - openingCash: Initial drawer float (drawer starts at 0)
+  /// - notes: Optional notes
+  /// 
+  /// Throws if:
+  /// - Any shift is already open for the branch (prevents duplicates)
   Future<FinancialShift> openShift({
     required String employeeId,
+    String? employeeName,
     String? shiftId,
+    String? scheduledShiftId,
+    String? scheduledShiftName,
     double openingCash = 0,
     String? notes,
   }) async {
-    // Check for existing open shift
-    final existingShift = await _financialShiftRepo.getOpenShiftForEmployee(employeeId);
-    if (existingShift != null) {
+    // Check for any existing open shift for the branch (not just employee)
+    final openShifts = await _financialShiftRepo.getOpenShiftsForBranch();
+    if (openShifts.isNotEmpty) {
+      final existingShift = openShifts.first;
       throw FinancialException(
-        'Employee already has an open shift. Please close it first.',
+        'A shift is already open (opened at ${existingShift.openedAt}). '
+        'Please close it first before opening a new one.',
         code: 'SHIFT_ALREADY_OPEN',
       );
     }
@@ -65,20 +85,35 @@ class FinancialService {
     final financialShift = FinancialShift(
       id: _uuid.v4(),
       branchId: '1', // SINGLE-BRANCH: Hardcoded
-      shiftId: shiftId,
+      shiftId: shiftId ?? scheduledShiftId,
       employeeId: employeeId,
       openedAt: now,
       openingCash: openingCash,
       status: FinancialShiftStatus.open,
       notes: notes,
+      scheduledShiftId: scheduledShiftId,
+      scheduledShiftName: scheduledShiftName,
+      openedByEmployeeName: employeeName,
       createdAt: now,
       updatedAt: now,
     );
 
     await _financialShiftRepo.insert(financialShift);
-    LoggingService.instance.info(
+    
+    LoggingService.instance.audit(
       'FinancialService',
-      'Opened financial shift: ${financialShift.id} for employee: $employeeId',
+      'SHIFT_OPENED',
+      '[SHIFT_OPENED] Financial shift opened: ${financialShift.id}',
+      details: {
+        'shift_id': financialShift.id,
+        'employee_id': employeeId,
+        'employee_name': employeeName,
+        'scheduled_shift_id': scheduledShiftId,
+        'scheduled_shift_name': scheduledShiftName,
+        'opening_cash': openingCash,
+        'drawer_initial_balance': 0,
+        'timestamp': now.toIso8601String(),
+      },
     );
 
     return financialShift;
@@ -273,7 +308,7 @@ class FinancialService {
     final salesByMethod = await getSalesBreakdown(financialShiftId);
     final totalSales = salesByMethod.values.fold(0.0, (sum, v) => sum + v);
     final totalCashSales = salesByMethod[PaymentMethod.cash] ?? 0;
-    final totalCardSales = salesByMethod[PaymentMethod.card] ?? 0;
+    final totalCardSales = salesByMethod[PaymentMethod.visa] ?? 0;
     final totalWalletSales = salesByMethod[PaymentMethod.wallet] ?? 0;
     final totalInsuranceSales = salesByMethod[PaymentMethod.insurance] ?? 0;
     final totalCreditSales = salesByMethod[PaymentMethod.credit] ?? 0;
@@ -652,8 +687,8 @@ class ShiftSummary {
   /// Cash sales only
   double get cashSales => salesByMethod[PaymentMethod.cash] ?? 0;
 
-  /// Card sales only
-  double get cardSales => salesByMethod[PaymentMethod.card] ?? 0;
+  /// Card/Visa sales only
+  double get cardSales => salesByMethod[PaymentMethod.visa] ?? 0;
 
   /// Wallet sales only
   double get walletSales => salesByMethod[PaymentMethod.wallet] ?? 0;

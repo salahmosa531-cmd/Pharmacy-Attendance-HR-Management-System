@@ -255,4 +255,75 @@ class ShiftRepository extends BaseRepository<Shift> {
     
     return employeeIds.toList();
   }
+  
+  /// Get detailed info about scheduled employees for the current shift
+  /// Returns employee IDs with names for display
+  Future<List<Map<String, String>>> getScheduledEmployeesWithDetails(String branchId) async {
+    final now = DateTime.now();
+    final currentTime = TimeOfDay.fromDateTime(now);
+    final todayDate = now.toIso8601String().split('T')[0];
+    final db = await database;
+    
+    // Get the current shift based on time
+    final currentShift = await getCurrentShift(branchId, currentTime);
+    if (currentShift == null) return [];
+    
+    // Find employees with daily overrides to this shift today
+    final overrideResults = await db.rawQuery('''
+      SELECT DISTINCT e.id, e.full_name, e.employee_code
+      FROM employees e
+      INNER JOIN employee_shift_assignments esa ON e.id = esa.employee_id
+      WHERE e.branch_id = ?
+        AND esa.shift_id = ?
+        AND esa.date = ?
+        AND e.is_active = 1
+    ''', [branchId, currentShift.id, todayDate]);
+    
+    // Find employees with this shift as their default assigned shift
+    final defaultResults = await db.rawQuery('''
+      SELECT DISTINCT e.id, e.full_name, e.employee_code
+      FROM employees e
+      WHERE e.branch_id = ?
+        AND e.assigned_shift_id = ?
+        AND e.is_active = 1
+        AND e.id NOT IN (
+          SELECT employee_id FROM employee_shift_assignments WHERE date = ?
+        )
+    ''', [branchId, currentShift.id, todayDate]);
+    
+    final employees = <Map<String, String>>[];
+    final seenIds = <String>{};
+    
+    for (final row in overrideResults) {
+      final id = row['id'] as String;
+      if (!seenIds.contains(id)) {
+        seenIds.add(id);
+        employees.add({
+          'id': id,
+          'name': row['full_name'] as String,
+          'code': row['employee_code'] as String,
+        });
+      }
+    }
+    
+    for (final row in defaultResults) {
+      final id = row['id'] as String;
+      if (!seenIds.contains(id)) {
+        seenIds.add(id);
+        employees.add({
+          'id': id,
+          'name': row['full_name'] as String,
+          'code': row['employee_code'] as String,
+        });
+      }
+    }
+    
+    return employees;
+  }
+  
+  /// Check if an employee is scheduled for the current shift
+  Future<bool> isEmployeeScheduledForCurrentShift(String employeeId, String branchId) async {
+    final scheduledIds = await getScheduledEmployeesForCurrentShift(branchId);
+    return scheduledIds.contains(employeeId);
+  }
 }
