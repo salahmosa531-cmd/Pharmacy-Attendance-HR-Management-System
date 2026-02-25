@@ -2376,7 +2376,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   IconData _getPaymentMethodIcon(PaymentMethod method) {
     switch (method) {
       case PaymentMethod.cash: return Icons.payments;
-      case PaymentMethod.card: return Icons.credit_card;
+      case PaymentMethod.visa: return Icons.credit_card;
       case PaymentMethod.wallet: return Icons.account_balance_wallet;
       case PaymentMethod.insurance: return Icons.health_and_safety;
       case PaymentMethod.credit: return Icons.receipt_long;
@@ -2386,7 +2386,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
   Color _getPaymentMethodColor(PaymentMethod method) {
     switch (method) {
       case PaymentMethod.cash: return Colors.green;
-      case PaymentMethod.card: return Colors.blue;
+      case PaymentMethod.visa: return Colors.blue;
       case PaymentMethod.wallet: return Colors.orange;
       case PaymentMethod.insurance: return Colors.purple;
       case PaymentMethod.credit: return Colors.grey;

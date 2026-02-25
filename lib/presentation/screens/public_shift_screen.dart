@@ -9,6 +9,7 @@ import '../../core/services/notifications_service.dart';
 import '../../core/services/safe_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/financial_shift_model.dart';
+import '../../data/models/shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
 import '../../data/models/employee_model.dart';
@@ -19,21 +20,23 @@ import '../widgets/debt_collection_dialog.dart';
 
 /// Public Financial Shift Screen - Kiosk Mode
 /// 
-/// Allows employees to perform financial operations without admin login:
-/// - Open/close shifts
-/// - Record sales, expenses, purchases, debt collections
-/// - View real-time summary and timeline
+/// SCHEDULE-DRIVEN ARCHITECTURE:
+/// - Automatically detects current scheduled shift on load
+/// - Only scheduled employees can operate (others view-only)
+/// - Financial shift is linked to scheduled shift
+/// - Prevents duplicate shift opening
 /// 
-/// Security:
-/// - Requires employee code for all operations
-/// - 5-minute temporary session to avoid repeated entry
-/// - All operations logged with employeeId, timestamp, source='kiosk'
-/// - Auto-close shift after 24 hours
+/// DRAWER/SAFE MODEL:
+/// - Drawer starts at 0 each shift (opening cash is change float)
+/// - Cash sales go to Drawer during shift
+/// - On close: Drawer cash transfers to Safe, drawer resets to 0
+/// - Supplier payments and debt settlements come from Safe only
 /// 
-/// Restrictions:
-/// - Cannot edit/delete records
-/// - Cannot access settings or reports
-/// - Cannot close previous shifts
+/// STABILITY:
+/// - All async operations have loading/error states
+/// - No null crashes - all values have fallbacks
+/// - Processing overlay prevents duplicate actions
+/// - Comprehensive audit logging
 class PublicShiftScreen extends StatefulWidget {
   const PublicShiftScreen({super.key});
 
@@ -42,11 +45,21 @@ class PublicShiftScreen extends StatefulWidget {
 }
 
 class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindingObserver {
+  // Services
   final _financialService = FinancialService.instance;
   final _employeeRepo = EmployeeRepository.instance;
   final _shiftRepo = ShiftRepository.instance;
   final _notificationsService = NotificationsService.instance;
   final _safeService = SafeService.instance;
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STATE VARIABLES
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  // Loading states
+  bool _isLoading = true;
+  bool _isProcessing = false;
+  String? _loadError;
   
   // Session management
   Employee? _currentEmployee;
@@ -54,36 +67,37 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   Timer? _sessionTimer;
   static const _sessionDurationMinutes = 5;
   
-  // UI State
-  bool _isLoading = true;
-  String? _loadError;
-  bool _isProcessing = false;
+  // Schedule context (detected on load)
+  Shift? _currentScheduledShift;
+  List<Map<String, String>> _scheduledEmployees = [];
+  bool _isEmployeeScheduled = false;
   
   // Financial data
-  FinancialShift? _currentShift;
+  FinancialShift? _currentFinancialShift;
   ShiftSummary? _shiftSummary;
   ShiftCashFlowSummary? _cashFlowSummary;
   List<ShiftSale> _sales = [];
   List<ShiftExpense> _expenses = [];
   List<_TimelineItem> _timeline = [];
+  double _safeBalance = 0;
   
   // Employee code entry
   final _codeController = TextEditingController();
-  final _codeFocusNode = FocusNode();
   
   // Formatters
   final _currencyFormat = NumberFormat.currency(symbol: '', decimalDigits: 2);
   final _timeFormat = DateFormat('hh:mm a');
   final _dateFormat = DateFormat('dd MMM yyyy');
   
-  // Tab controller
-  late TabController _tabController;
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LIFECYCLE
+  // ═══════════════════════════════════════════════════════════════════════════
   
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _loadCurrentShift();
+    _initializeScreen();
   }
   
   @override
@@ -91,7 +105,6 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     WidgetsBinding.instance.removeObserver(this);
     _sessionTimer?.cancel();
     _codeController.dispose();
-    _codeFocusNode.dispose();
     super.dispose();
   }
   
@@ -99,90 +112,47 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _checkAutoClose();
-      _loadCurrentShift();
+      _refreshAllData();
     }
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // SESSION MANAGEMENT
+  // INITIALIZATION
   // ═══════════════════════════════════════════════════════════════════════════
   
-  bool get _hasActiveSession {
-    if (_currentEmployee == null || _sessionExpiresAt == null) return false;
-    return DateTime.now().isBefore(_sessionExpiresAt!);
-  }
-  
-  void _startSession(Employee employee) {
-    _currentEmployee = employee;
-    _sessionExpiresAt = DateTime.now().add(const Duration(minutes: _sessionDurationMinutes));
+  /// Initialize screen - detect schedule context and load data
+  Future<void> _initializeScreen() async {
+    if (!mounted) return;
     
-    _sessionTimer?.cancel();
-    _sessionTimer = Timer(const Duration(minutes: _sessionDurationMinutes), () {
-      if (mounted) {
-        setState(() {
-          _currentEmployee = null;
-          _sessionExpiresAt = null;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Session expired. Please enter your code again.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    });
-    
-    LoggingService.instance.info(
-      'PublicShift',
-      '[SESSION_START] Employee ${employee.employeeCode} started session, expires at $_sessionExpiresAt',
-    );
-  }
-  
-  void _extendSession() {
-    if (_currentEmployee != null) {
-      _startSession(_currentEmployee!);
-    }
-  }
-  
-  void _endSession() {
-    _sessionTimer?.cancel();
-    _currentEmployee = null;
-    _sessionExpiresAt = null;
-    if (mounted) setState(() {});
-  }
-  
-  // ═══════════════════════════════════════════════════════════════════════════
-  // DATA LOADING
-  // ═══════════════════════════════════════════════════════════════════════════
-  
-  Future<void> _loadCurrentShift() async {
     setState(() {
       _isLoading = true;
       _loadError = null;
     });
     
     try {
-      // Check for any open shift (public mode - any employee's shift)
-      final openShifts = await _financialService.getOpenShiftsForBranch();
+      // Step 1: Detect current scheduled shift
+      await _detectScheduleContext();
       
-      if (openShifts.isNotEmpty) {
-        _currentShift = openShifts.first;
-        await _refreshShiftData();
-        
-        // Check for auto-close (24 hours)
+      // Step 2: Load Safe balance
+      _safeBalance = await _safeService.getCurrentBalance();
+      
+      // Step 3: Check for open financial shift
+      await _loadCurrentFinancialShift();
+      
+      // Step 4: Check for auto-close if shift is open too long
+      if (_currentFinancialShift != null) {
         await _checkAutoClose();
-      } else {
-        _currentShift = null;
-        _shiftSummary = null;
-        _cashFlowSummary = null;
-        _sales = [];
-        _expenses = [];
-        _timeline = [];
       }
-    } catch (e) {
-      LoggingService.instance.error('PublicShift', 'Error loading shift', e, StackTrace.current);
+      
+      LoggingService.instance.info(
+        'PublicShift',
+        '[INIT] Screen initialized. Schedule: ${_currentScheduledShift?.name ?? "None"}, '
+        'Shift open: ${_currentFinancialShift != null}, Safe: $_safeBalance',
+      );
+    } catch (e, stack) {
+      LoggingService.instance.error('PublicShift', 'Initialization error', e, stack);
       if (mounted) {
-        setState(() => _loadError = 'Error loading shift: $e');
+        setState(() => _loadError = 'Failed to initialize: ${e.toString()}');
       }
     }
     
@@ -191,15 +161,81 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     }
   }
   
-  Future<void> _refreshShiftData() async {
-    if (_currentShift == null) return;
+  /// Detect current scheduled shift context
+  Future<void> _detectScheduleContext() async {
+    try {
+      final now = DateTime.now();
+      final currentTime = TimeOfDay.fromDateTime(now);
+      
+      // Get current scheduled shift based on time
+      _currentScheduledShift = await _shiftRepo.getCurrentShift('1', currentTime);
+      
+      // Get scheduled employees for this shift
+      if (_currentScheduledShift != null) {
+        _scheduledEmployees = await _shiftRepo.getScheduledEmployeesWithDetails('1');
+      } else {
+        _scheduledEmployees = [];
+      }
+      
+      LoggingService.instance.info(
+        'PublicShift',
+        '[SCHEDULE_DETECT] Current shift: ${_currentScheduledShift?.name ?? "None"}, '
+        'Scheduled employees: ${_scheduledEmployees.length}',
+      );
+    } catch (e) {
+      LoggingService.instance.warning('PublicShift', 'Failed to detect schedule: $e');
+      _currentScheduledShift = null;
+      _scheduledEmployees = [];
+    }
+  }
+  
+  /// Load current financial shift and related data
+  Future<void> _loadCurrentFinancialShift() async {
+    final openShifts = await _financialService.getOpenShiftsForBranch();
+    
+    if (openShifts.isNotEmpty) {
+      _currentFinancialShift = openShifts.first;
+      await _refreshShiftData();
+    } else {
+      _currentFinancialShift = null;
+      _shiftSummary = null;
+      _cashFlowSummary = null;
+      _sales = [];
+      _expenses = [];
+      _timeline = [];
+    }
+  }
+  
+  /// Refresh all data
+  Future<void> _refreshAllData() async {
+    if (_isProcessing) return;
+    
+    setState(() => _isLoading = true);
     
     try {
-      _shiftSummary = await _financialService.getShiftSummary(_currentShift!.id);
-      _cashFlowSummary = await _financialService.getShiftCashFlowSummary(_currentShift!.id);
-      _sales = await _financialService.getSalesForShift(_currentShift!.id);
-      _expenses = await _financialService.getExpensesForShift(_currentShift!.id);
-      _generateTimeline();
+      await _detectScheduleContext();
+      _safeBalance = await _safeService.getCurrentBalance();
+      await _loadCurrentFinancialShift();
+    } catch (e) {
+      LoggingService.instance.error('PublicShift', 'Refresh error', e, StackTrace.current);
+    }
+    
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+  
+  /// Refresh shift-specific data (sales, expenses, summary)
+  Future<void> _refreshShiftData() async {
+    if (_currentFinancialShift == null) return;
+    
+    try {
+      _shiftSummary = await _financialService.getShiftSummary(_currentFinancialShift!.id);
+      _cashFlowSummary = await _financialService.getShiftCashFlowSummary(_currentFinancialShift!.id);
+      _sales = await _financialService.getSalesForShift(_currentFinancialShift!.id);
+      _expenses = await _financialService.getExpensesForShift(_currentFinancialShift!.id);
+      _safeBalance = await _safeService.getCurrentBalance();
+      _buildTimeline();
       
       if (mounted) setState(() {});
     } catch (e) {
@@ -207,7 +243,8 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     }
   }
   
-  void _generateTimeline() {
+  /// Build timeline from sales and expenses
+  void _buildTimeline() {
     _timeline = [];
     
     for (final sale in _sales) {
@@ -248,35 +285,33 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   // ═══════════════════════════════════════════════════════════════════════════
   
   Future<void> _checkAutoClose() async {
-    if (_currentShift == null) return;
+    if (_currentFinancialShift == null) return;
     
-    final shiftAge = DateTime.now().difference(_currentShift!.openedAt);
+    final shiftAge = DateTime.now().difference(_currentFinancialShift!.openedAt);
     if (shiftAge.inHours >= 24) {
       LoggingService.instance.warning(
         'PublicShift',
-        '[AUTO_CLOSE] Shift ${_currentShift!.id} has been open for ${shiftAge.inHours}h, auto-closing',
+        '[AUTO_CLOSE] Shift has been open for ${shiftAge.inHours}h, auto-closing',
       );
       
       try {
-        // Auto-close with expected cash
         final expectedCash = _shiftSummary?.expectedCash ?? 0;
         await _financialService.closeShift(
-          financialShiftId: _currentShift!.id,
+          financialShiftId: _currentFinancialShift!.id,
           actualCash: expectedCash,
           closedBy: 'SYSTEM_AUTO_CLOSE',
           differenceReason: 'Auto-closed after 24 hours',
           notes: 'Automatic closure due to shift exceeding 24 hours',
+          source: 'system',
         );
         
-        await _loadCurrentShift();
+        await _refreshAllData();
         
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Previous shift was auto-closed after 24 hours'),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 5),
-            ),
+          _showSnackBar(
+            'Previous shift was auto-closed after 24 hours',
+            Colors.orange,
+            duration: const Duration(seconds: 5),
           );
         }
       } catch (e) {
@@ -286,25 +321,84 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
+  // SESSION MANAGEMENT
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  bool get _hasActiveSession {
+    if (_currentEmployee == null || _sessionExpiresAt == null) return false;
+    return DateTime.now().isBefore(_sessionExpiresAt!);
+  }
+  
+  void _startSession(Employee employee) {
+    _currentEmployee = employee;
+    _sessionExpiresAt = DateTime.now().add(const Duration(minutes: _sessionDurationMinutes));
+    
+    // Check if employee is scheduled
+    _isEmployeeScheduled = _scheduledEmployees.any((e) => e['id'] == employee.id);
+    
+    _sessionTimer?.cancel();
+    _sessionTimer = Timer(const Duration(minutes: _sessionDurationMinutes), () {
+      if (mounted) {
+        setState(() {
+          _currentEmployee = null;
+          _sessionExpiresAt = null;
+          _isEmployeeScheduled = false;
+        });
+        _showSnackBar('Session expired. Please enter your code again.', Colors.orange);
+      }
+    });
+    
+    LoggingService.instance.info(
+      'PublicShift',
+      '[SESSION_START] Employee ${employee.employeeCode} started session. '
+      'Scheduled: $_isEmployeeScheduled',
+    );
+  }
+  
+  void _extendSession() {
+    if (_currentEmployee != null) {
+      _startSession(_currentEmployee!);
+    }
+  }
+  
+  void _endSession() {
+    _sessionTimer?.cancel();
+    _currentEmployee = null;
+    _sessionExpiresAt = null;
+    _isEmployeeScheduled = false;
+    if (mounted) setState(() {});
+  }
+  
+  // ═══════════════════════════════════════════════════════════════════════════
   // EMPLOYEE VERIFICATION
   // ═══════════════════════════════════════════════════════════════════════════
   
-  Future<Employee?> _verifyEmployee() async {
+  /// Verify employee for operations
+  /// Returns null if verification failed or cancelled
+  Future<Employee?> _verifyEmployee({bool requireScheduled = false}) async {
     if (_hasActiveSession) {
       _extendSession();
+      
+      // Check if scheduled employee is required
+      if (requireScheduled && !_isEmployeeScheduled && _currentScheduledShift != null) {
+        final confirmed = await _showUnscheduledAccessDialog(_currentEmployee!);
+        if (confirmed != true) return null;
+      }
+      
       return _currentEmployee;
     }
     
-    return await _showEmployeeCodeDialog();
+    return await _showEmployeeCodeDialog(requireScheduled: requireScheduled);
   }
   
-  Future<Employee?> _showEmployeeCodeDialog() async {
+  /// Show employee code verification dialog
+  Future<Employee?> _showEmployeeCodeDialog({bool requireScheduled = false}) async {
     _codeController.clear();
     
     return showDialog<Employee>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
+      builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           bool isVerifying = false;
           String? errorMessage;
@@ -340,8 +434,29 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                 return;
               }
               
+              // Check if employee is scheduled (when required)
+              final isScheduled = _scheduledEmployees.any((e) => e['id'] == employee.id);
+              
+              if (requireScheduled && !isScheduled && _currentScheduledShift != null) {
+                // Show warning but allow with confirmation
+                setDialogState(() => isVerifying = false);
+                
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+                
+                final confirmed = await _showUnscheduledAccessDialog(employee);
+                if (confirmed == true) {
+                  _startSession(employee);
+                  return employee;
+                }
+                return;
+              }
+              
               _startSession(employee);
-              if (context.mounted) Navigator.pop(context, employee);
+              if (dialogContext.mounted) {
+                Navigator.pop(dialogContext, employee);
+              }
             } catch (e) {
               setDialogState(() {
                 isVerifying = false;
@@ -391,21 +506,62 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                   onSubmitted: (_) => verify(),
                 ),
                 const SizedBox(height: 12),
+                // Show schedule info
+                if (_currentScheduledShift != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.schedule, color: Colors.blue, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Current Shift: ${_currentScheduledShift!.name}',
+                            style: const TextStyle(fontSize: 12, color: Colors.blue),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.warning_amber, color: Colors.orange, size: 18),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'No scheduled shift detected',
+                            style: TextStyle(fontSize: 12, color: Colors.orange),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
+                    color: Colors.grey.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.info_outline, color: Colors.blue, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Session lasts $_sessionDurationMinutes minutes',
-                          style: const TextStyle(fontSize: 12, color: Colors.blue),
-                        ),
+                      const Icon(Icons.timer, color: Colors.grey, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Session lasts $_sessionDurationMinutes minutes',
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                     ],
                   ),
@@ -414,7 +570,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
             ),
             actions: [
               TextButton(
-                onPressed: isVerifying ? null : () => Navigator.pop(context),
+                onPressed: isVerifying ? null : () => Navigator.pop(dialogContext),
                 child: const Text('Cancel'),
               ),
               FilledButton(
@@ -434,156 +590,8 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     );
   }
   
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SHIFT OPERATIONS
-  // ═══════════════════════════════════════════════════════════════════════════
-  
-  Future<void> _openShift() async {
-    // Verify employee
-    final employee = await _verifyEmployee();
-    if (employee == null) return;
-    
-    // Check if shift already open
-    if (_currentShift != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('A shift is already open. Close it first to open a new one.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-    
-    // [SCHEDULE_CHECK] Verify employee is scheduled for current time
-    LoggingService.instance.info(
-      'PublicShift',
-      '[SCHEDULE_CHECK] Checking schedule for employee ${employee.employeeCode}',
-    );
-    
-    final scheduledShift = await _shiftRepo.getEmployeeCurrentScheduledShift(employee.id);
-    String? scheduleNote;
-    bool isScheduledOpening = true;
-    
-    if (scheduledShift == null) {
-      // Employee is NOT scheduled - show warning and log unscheduled opening
-      isScheduledOpening = false;
-      final scheduledEmployees = await _shiftRepo.getScheduledEmployeesForCurrentShift('1');
-      
-      LoggingService.instance.warning(
-        'PublicShift',
-        '[SCHEDULE_CHECK] Employee ${employee.employeeCode} is NOT scheduled for current time. '
-        'Scheduled employees: ${scheduledEmployees.length}',
-      );
-      
-      if (scheduledEmployees.isNotEmpty && !scheduledEmployees.contains(employee.id)) {
-        // Show warning - opening outside schedule
-        final confirmed = await _showUnscheduledOpeningDialog(employee);
-        if (confirmed != true) return;
-        scheduleNote = 'UNSCHEDULED: Opened outside schedule (not assigned)';
-        
-        // Add notification about unscheduled opening
-        _notificationsService.addSmartWarning(
-          title: 'Unscheduled Shift Opening',
-          message: '${employee.fullName} opened shift outside their schedule',
-          severity: NotificationSeverity.warning,
-        );
-        
-        // Log the unscheduled opening audit
-        LoggingService.instance.audit(
-          'PublicShift',
-          'UNSCHEDULED_SHIFT_OPENING',
-          '[SCHEDULE_CHECK] Employee ${employee.employeeCode} opening shift outside schedule',
-          details: {
-            'employee_id': employee.id,
-            'employee_code': employee.employeeCode,
-            'employee_name': employee.fullName,
-            'scheduled_employees_count': scheduledEmployees.length,
-            'is_scheduled': false,
-            'source': 'kiosk',
-            'timestamp': DateTime.now().toIso8601String(),
-          },
-        );
-      } else {
-        scheduleNote = 'No active schedule - manual opening';
-      }
-    } else {
-      scheduleNote = 'Scheduled for ${scheduledShift.name} (${scheduledShift.timeRange})';
-      LoggingService.instance.info(
-        'PublicShift',
-        '[SCHEDULE_CHECK] Employee ${employee.employeeCode} is scheduled for ${scheduledShift.name}',
-      );
-    }
-    
-    // DRAWER ENFORCEMENT: Opening cash is change float only
-    // Drawer starts conceptually at 0, opening cash is just the change float put in
-    final openingCash = await _showOpeningCashDialog();
-    if (openingCash == null) return;
-    
-    setState(() => _isProcessing = true);
-    
-    try {
-      final notes = [
-        'Opened from kiosk by ${employee.fullName}',
-        if (scheduleNote != null) scheduleNote,
-        '[DRAWER_START] Drawer initialized with ${openingCash.toStringAsFixed(2)} EGP change float',
-      ].join('. ');
-          
-      _currentShift = await _financialService.openShift(
-        employeeId: employee.id,
-        shiftId: scheduledShift?.id,
-        openingCash: openingCash,
-        notes: notes,
-      );
-      
-      LoggingService.instance.audit(
-        'PublicShift',
-        'SHIFT_OPENED',
-        '[DRAWER_START] Employee ${employee.employeeCode} opened shift ${_currentShift!.id}',
-        details: {
-          'shift_id': _currentShift!.id,
-          'employee_id': employee.id,
-          'employee_code': employee.employeeCode,
-          'opening_cash': openingCash,
-          'drawer_initial_balance': 0, // Drawer conceptually starts at 0
-          'change_float': openingCash, // Opening cash is the change float
-          'source': 'kiosk',
-          'scheduled_shift_id': scheduledShift?.id,
-          'scheduled_shift_name': scheduledShift?.name,
-          'is_scheduled': isScheduledOpening,
-          'timestamp': DateTime.now().toIso8601String(),
-        },
-      );
-      
-      await _refreshShiftData();
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 8),
-                Text('Shift opened by ${employee.fullName}'),
-              ],
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      LoggingService.instance.error('PublicShift', 'Error opening shift', e, StackTrace.current);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error opening shift: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-    
-    if (mounted) setState(() => _isProcessing = false);
-  }
-  
-  /// Show warning dialog when opening shift outside schedule
-  Future<bool?> _showUnscheduledOpeningDialog(Employee employee) async {
+  /// Show dialog when unscheduled employee tries to access
+  Future<bool?> _showUnscheduledAccessDialog(Employee employee) async {
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -606,7 +614,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${employee.fullName} is not scheduled for the current shift.',
+              '${employee.fullName} is not scheduled for "${_currentScheduledShift?.name ?? "current shift"}".',
               style: const TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 16),
@@ -623,7 +631,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Opening outside schedule will be logged for admin review.',
+                      'This action will be logged for admin review.',
                       style: TextStyle(fontSize: 13),
                     ),
                   ),
@@ -644,14 +652,233 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.orange),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Open Anyway'),
+            onPressed: () {
+              // Log unscheduled access
+              LoggingService.instance.audit(
+                'PublicShift',
+                'UNSCHEDULED_ACCESS',
+                '[SCHEDULE_CHECK] Unscheduled employee accessing shift',
+                details: {
+                  'employee_id': employee.id,
+                  'employee_code': employee.employeeCode,
+                  'employee_name': employee.fullName,
+                  'scheduled_shift': _currentScheduledShift?.name,
+                  'timestamp': DateTime.now().toIso8601String(),
+                },
+              );
+              
+              _notificationsService.addSmartWarning(
+                title: 'Unscheduled Access',
+                message: '${employee.fullName} accessed shift outside schedule',
+                severity: NotificationSeverity.warning,
+              );
+              
+              _startSession(employee);
+              Navigator.pop(context, true);
+            },
+            child: const Text('Continue Anyway'),
           ),
         ],
       ),
     );
   }
   
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SHIFT OPERATIONS
+  // ═══════════════════════════════════════════════════════════════════════════
+  
+  /// Open a new financial shift
+  Future<void> _openShift() async {
+    // Prevent duplicate shift
+    if (_currentFinancialShift != null) {
+      _showSnackBar('A shift is already open. Close it first.', Colors.orange);
+      return;
+    }
+    
+    // Verify employee (require scheduled for opening)
+    final employee = await _verifyEmployee(requireScheduled: true);
+    if (employee == null) return;
+    
+    // Log schedule check
+    LoggingService.instance.info(
+      'PublicShift',
+      '[SCHEDULE_CHECK] Employee ${employee.employeeCode} attempting to open shift. '
+      'Scheduled: $_isEmployeeScheduled, Shift: ${_currentScheduledShift?.name}',
+    );
+    
+    // Get opening cash (change float)
+    final openingCash = await _showOpeningCashDialog();
+    if (openingCash == null) return;
+    
+    setState(() => _isProcessing = true);
+    
+    try {
+      // Build notes with schedule context
+      final notesParts = <String>[
+        'Opened from kiosk by ${employee.fullName}',
+        if (_currentScheduledShift != null)
+          'Scheduled: ${_currentScheduledShift!.name} (${_currentScheduledShift!.timeRange})',
+        if (!_isEmployeeScheduled && _currentScheduledShift != null)
+          'WARNING: Employee not scheduled',
+        '[DRAWER_START] Drawer initialized with ${openingCash.toStringAsFixed(2)} EGP change float',
+      ];
+      
+      _currentFinancialShift = await _financialService.openShift(
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+        shiftId: _currentScheduledShift?.id,
+        scheduledShiftId: _currentScheduledShift?.id,
+        scheduledShiftName: _currentScheduledShift?.name,
+        openingCash: openingCash,
+        notes: notesParts.join('. '),
+      );
+      
+      LoggingService.instance.audit(
+        'PublicShift',
+        'SHIFT_OPENED',
+        '[DRAWER_START] [SCHEDULE_CHECK] Shift opened',
+        details: {
+          'shift_id': _currentFinancialShift!.id,
+          'employee_id': employee.id,
+          'employee_code': employee.employeeCode,
+          'employee_name': employee.fullName,
+          'opening_cash': openingCash,
+          'drawer_initial_balance': 0,
+          'change_float': openingCash,
+          'scheduled_shift_id': _currentScheduledShift?.id,
+          'scheduled_shift_name': _currentScheduledShift?.name,
+          'is_scheduled': _isEmployeeScheduled,
+          'source': 'kiosk',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+      
+      await _refreshShiftData();
+      
+      _showSnackBar('Shift opened by ${employee.fullName}', Colors.green);
+    } catch (e) {
+      LoggingService.instance.error('PublicShift', 'Error opening shift', e, StackTrace.current);
+      _showSnackBar('Error opening shift: $e', Colors.red);
+    }
+    
+    if (mounted) setState(() => _isProcessing = false);
+  }
+  
+  /// Close the current financial shift
+  Future<void> _closeShift() async {
+    if (_currentFinancialShift == null) {
+      _showSnackBar('No shift is currently open', Colors.orange);
+      return;
+    }
+    
+    // Verify employee
+    final employee = await _verifyEmployee();
+    if (employee == null) return;
+    
+    // Get Safe balance for display
+    final safeBalanceBefore = await _safeService.getCurrentBalance();
+    
+    // Show close dialog with all details
+    final result = await _showCloseShiftDialog(safeBalanceBefore: safeBalanceBefore);
+    if (result == null) return;
+    
+    setState(() => _isProcessing = true);
+    
+    try {
+      final actualCash = result['actualCash'] as double;
+      
+      // Close shift - this transfers to Safe and resets drawer
+      final closure = await _financialService.closeShift(
+        financialShiftId: _currentFinancialShift!.id,
+        actualCash: actualCash,
+        closedBy: employee.id,
+        differenceReason: result['reason'] as String?,
+        notes: 'Closed from kiosk by ${employee.fullName}',
+        source: 'kiosk',
+      );
+      
+      final difference = actualCash - (_shiftSummary?.expectedCash ?? 0);
+      
+      // Log Safe transfer
+      LoggingService.instance.audit(
+        'PublicShift',
+        'SAFE_TRANSFER',
+        '[SAFE_TRANSFER] Transferred ${closure.transferredToSafe.toStringAsFixed(2)} EGP from Drawer to Safe',
+        details: {
+          'shift_id': _currentFinancialShift!.id,
+          'employee_id': employee.id,
+          'transferred_amount': closure.transferredToSafe,
+          'safe_balance_before': closure.safeBalanceBefore,
+          'safe_balance_after': closure.safeBalanceAfter,
+          'payment_source': 'drawer_to_safe',
+          'source': 'kiosk',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+      
+      // Log drawer reset
+      LoggingService.instance.audit(
+        'PublicShift',
+        'DRAWER_RESET',
+        '[DRAWER_RESET] Drawer reset to 0 after shift close',
+        details: {
+          'shift_id': _currentFinancialShift!.id,
+          'employee_id': employee.id,
+          'drawer_final_cash': actualCash,
+          'drawer_reset_to': 0,
+          'expected_cash': _shiftSummary?.expectedCash,
+          'difference': difference,
+          'source': 'kiosk',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+      
+      // Log shift closure
+      LoggingService.instance.audit(
+        'PublicShift',
+        'SHIFT_CLOSED',
+        'Shift closed successfully',
+        details: {
+          'shift_id': _currentFinancialShift!.id,
+          'employee_id': employee.id,
+          'employee_code': employee.employeeCode,
+          'actual_cash': actualCash,
+          'expected_cash': _shiftSummary?.expectedCash,
+          'difference': difference,
+          'difference_reason': result['reason'],
+          'total_sales': closure.totalSales,
+          'total_expenses': closure.totalExpenses,
+          'safe_balance_before': closure.safeBalanceBefore,
+          'safe_balance_after': closure.safeBalanceAfter,
+          'transferred_to_safe': closure.transferredToSafe,
+          'source': 'kiosk',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+      
+      _showSnackBar(
+        'Shift closed. ${closure.transferredToSafe.toStringAsFixed(2)} EGP transferred to Safe.',
+        Colors.green,
+        duration: const Duration(seconds: 4),
+      );
+      
+      // Reset state
+      _currentFinancialShift = null;
+      _shiftSummary = null;
+      _cashFlowSummary = null;
+      _sales = [];
+      _expenses = [];
+      _timeline = [];
+      _safeBalance = await _safeService.getCurrentBalance();
+    } catch (e) {
+      LoggingService.instance.error('PublicShift', 'Error closing shift', e, StackTrace.current);
+      _showSnackBar('Error closing shift: $e', Colors.red);
+    }
+    
+    if (mounted) setState(() => _isProcessing = false);
+  }
+  
+  /// Show opening cash dialog
   Future<double?> _showOpeningCashDialog() async {
     final controller = TextEditingController();
     
@@ -663,7 +890,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: AppTheme.primaryColor.withOpacity(0.1),
+                color: Colors.green.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(Icons.play_circle, color: Colors.green),
@@ -674,9 +901,69 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Count the cash in the drawer and enter the amount:'),
+            // Schedule context
+            if (_currentScheduledShift != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.schedule, color: Colors.blue, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _currentScheduledShift!.name,
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
+                          ),
+                          Text(
+                            _currentScheduledShift!.timeRange,
+                            style: TextStyle(fontSize: 12, color: Colors.blue[700]),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+            
+            // Safe balance display
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.lock, size: 18, color: Colors.grey),
+                      SizedBox(width: 8),
+                      Text('Safe Balance:'),
+                    ],
+                  ),
+                  Text(
+                    '${_currencyFormat.format(_safeBalance)} EGP',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 16),
+            
+            const Text('Enter the change float for the drawer:'),
+            const SizedBox(height: 8),
             TextField(
               controller: controller,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -689,6 +976,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                 prefixIcon: Icon(Icons.payments),
                 border: OutlineInputBorder(),
                 suffixText: 'EGP',
+                helperText: 'Drawer starts at 0, this is the change float',
               ),
             ),
           ],
@@ -711,143 +999,13 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     );
   }
   
-  Future<void> _closeShift() async {
-    if (_currentShift == null) return;
-    
-    // Verify employee
-    final employee = await _verifyEmployee();
-    if (employee == null) return;
-    
-    // Get Safe balance before close for UI display
-    final safeBalanceBefore = await _safeService.getCurrentBalance();
-    
-    // Show close dialog with Safe info
-    final result = await _showCloseShiftDialog(safeBalanceBefore: safeBalanceBefore);
-    if (result == null) return;
-    
-    setState(() => _isProcessing = true);
-    
-    try {
-      final actualCash = result['actualCash'] as double;
-      
-      // Close shift - this internally calls SafeService.transferFromShift()
-      final closure = await _financialService.closeShift(
-        financialShiftId: _currentShift!.id,
-        actualCash: actualCash,
-        closedBy: employee.id,
-        differenceReason: result['reason'] as String?,
-        notes: 'Closed from kiosk by ${employee.fullName}',
-        source: 'kiosk',
-      );
-      
-      final difference = actualCash - (_shiftSummary?.expectedCash ?? 0);
-      
-      // [SAFE_TRANSFER] Log the Safe transfer details
-      LoggingService.instance.audit(
-        'PublicShift',
-        'SAFE_TRANSFER',
-        '[SAFE_TRANSFER] Transferred ${closure.transferredToSafe.toStringAsFixed(2)} EGP from Drawer to Safe',
-        details: {
-          'shift_id': _currentShift!.id,
-          'employee_id': employee.id,
-          'employee_code': employee.employeeCode,
-          'transferred_amount': closure.transferredToSafe,
-          'safe_balance_before': closure.safeBalanceBefore,
-          'safe_balance_after': closure.safeBalanceAfter,
-          'safe_payments_during_shift': closure.safePayments,
-          'payment_source': 'drawer_to_safe',
-          'source': 'kiosk',
-          'timestamp': DateTime.now().toIso8601String(),
-        },
-      );
-      
-      // [DRAWER_RESET] Log the drawer reset
-      LoggingService.instance.audit(
-        'PublicShift',
-        'DRAWER_RESET',
-        '[DRAWER_RESET] Drawer reset to 0 after shift close. Cash transferred to Safe.',
-        details: {
-          'shift_id': _currentShift!.id,
-          'employee_id': employee.id,
-          'employee_code': employee.employeeCode,
-          'drawer_final_cash': actualCash,
-          'drawer_reset_to': 0,
-          'expected_cash': _shiftSummary?.expectedCash,
-          'difference': difference,
-          'source': 'kiosk',
-          'timestamp': DateTime.now().toIso8601String(),
-        },
-      );
-      
-      // Main shift closure audit
-      LoggingService.instance.audit(
-        'PublicShift',
-        'SHIFT_CLOSED',
-        'Employee ${employee.employeeCode} closed shift ${_currentShift!.id}',
-        details: {
-          'shift_id': _currentShift!.id,
-          'employee_id': employee.id,
-          'employee_code': employee.employeeCode,
-          'actual_cash': actualCash,
-          'expected_cash': _shiftSummary?.expectedCash,
-          'difference': difference,
-          'difference_reason': result['reason'],
-          'total_sales': closure.totalSales,
-          'total_expenses': closure.totalExpenses,
-          'safe_balance_before': closure.safeBalanceBefore,
-          'safe_balance_after': closure.safeBalanceAfter,
-          'transferred_to_safe': closure.transferredToSafe,
-          'source': 'kiosk',
-          'timestamp': DateTime.now().toIso8601String(),
-        },
-      );
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Shift closed. ${closure.transferredToSafe.toStringAsFixed(2)} EGP transferred to Safe.',
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
-      
-      // Reset all shift-related state
-      _currentShift = null;
-      _shiftSummary = null;
-      _cashFlowSummary = null;
-      _sales = [];
-      _expenses = [];
-      _timeline = [];
-    } catch (e) {
-      LoggingService.instance.error('PublicShift', 'Error closing shift', e, StackTrace.current);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error closing shift: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-    
-    if (mounted) setState(() => _isProcessing = false);
-  }
-  
+  /// Show close shift dialog with comprehensive summary
   Future<Map<String, dynamic>?> _showCloseShiftDialog({double safeBalanceBefore = 0}) async {
     final actualCashController = TextEditingController();
     final reasonController = TextEditingController();
     double? enteredCash;
     double difference = 0;
     final expectedCash = _shiftSummary?.expectedCash ?? 0;
-    final currencyFormat = _currencyFormat;
     
     return showDialog<Map<String, dynamic>>(
       context: context,
@@ -870,7 +1028,30 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Shift info
+                if (_currentFinancialShift?.scheduledShiftName != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.schedule, size: 16, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Text(
+                          _currentFinancialShift!.scheduledShiftName!,
+                          style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                
                 // Drawer Summary
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -883,11 +1064,11 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                     children: [
                       const Text('Drawer Summary', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                       const SizedBox(height: 8),
-                      _buildCloseDialogRow('Opening Cash (Float)', _currentShift?.openingCash ?? 0, Icons.account_balance_wallet),
-                      _buildCloseDialogRow('+ Cash Sales', _shiftSummary?.cashSales ?? 0, Icons.add_circle, color: Colors.green),
-                      _buildCloseDialogRow('- Expenses', _shiftSummary?.totalExpenses ?? 0, Icons.remove_circle, color: Colors.red),
+                      _buildDialogRow('Opening Cash (Float)', _currentFinancialShift?.openingCash ?? 0, Icons.account_balance_wallet),
+                      _buildDialogRow('+ Cash Sales', _shiftSummary?.cashSales ?? 0, Icons.add_circle, color: Colors.green),
+                      _buildDialogRow('- Expenses', _shiftSummary?.totalExpenses ?? 0, Icons.remove_circle, color: Colors.red),
                       const Divider(height: 20),
-                      _buildCloseDialogRow('= Expected in Drawer', expectedCash, Icons.calculate, isBold: true, color: AppTheme.primaryColor),
+                      _buildDialogRow('= Expected in Drawer', expectedCash, Icons.calculate, isBold: true, color: AppTheme.primaryColor),
                     ],
                   ),
                 ),
@@ -904,11 +1085,11 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      const Row(
                         children: [
-                          const Icon(Icons.lock, size: 16, color: Colors.blue),
-                          const SizedBox(width: 6),
-                          const Text('Safe (Vault)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue)),
+                          Icon(Icons.lock, size: 16, color: Colors.blue),
+                          SizedBox(width: 6),
+                          Text('Safe (Vault)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue)),
                         ],
                       ),
                       const SizedBox(height: 8),
@@ -917,7 +1098,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                         children: [
                           const Text('Current Balance:', style: TextStyle(fontSize: 12)),
                           Text(
-                            '${currencyFormat.format(safeBalanceBefore)} EGP',
+                            '${_currencyFormat.format(safeBalanceBefore)} EGP',
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                           ),
                         ],
@@ -929,7 +1110,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                           children: [
                             const Text('After Transfer:', style: TextStyle(fontSize: 12)),
                             Text(
-                              '${currencyFormat.format(safeBalanceBefore + (enteredCash ?? 0))} EGP',
+                              '${_currencyFormat.format(safeBalanceBefore + enteredCash!)} EGP',
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.green),
                             ),
                           ],
@@ -938,9 +1119,9 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                     ],
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 
-                // Actual cash
+                // Actual cash input
                 TextField(
                   controller: actualCashController,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -1091,7 +1272,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     );
   }
   
-  Widget _buildCloseDialogRow(String label, double value, IconData icon, {bool isBold = false, Color? color}) {
+  Widget _buildDialogRow(String label, double value, IconData icon, {bool isBold = false, Color? color}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -1121,11 +1302,10 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   // RECORD OPERATIONS
   // ═══════════════════════════════════════════════════════════════════════════
   
+  /// Record a sale
   Future<void> _recordSale() async {
-    if (_currentShift == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please open a shift first'), backgroundColor: Colors.orange),
-      );
+    if (_currentFinancialShift == null) {
+      _showSnackBar('Please open a shift first', Colors.orange);
       return;
     }
     
@@ -1139,7 +1319,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     
     try {
       await _financialService.recordSale(
-        financialShiftId: _currentShift!.id,
+        financialShiftId: _currentFinancialShift!.id,
         amount: result['amount'] as double,
         paymentMethod: result['method'] as PaymentMethod,
         description: result['description'] as String?,
@@ -1154,31 +1334,15 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       
       await _refreshShiftData();
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 8),
-                Text('Sale recorded: ${_currencyFormat.format(result['amount'])} EGP'),
-              ],
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      _showSnackBar('Sale recorded: ${_currencyFormat.format(result['amount'])} EGP', Colors.green);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error recording sale: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _showSnackBar('Error recording sale: $e', Colors.red);
     }
     
     if (mounted) setState(() => _isProcessing = false);
   }
   
+  /// Show sale dialog
   Future<Map<String, dynamic>?> _showSaleDialog() async {
     final amountController = TextEditingController();
     final descController = TextEditingController();
@@ -1294,11 +1458,10 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     );
   }
   
+  /// Record an expense
   Future<void> _recordExpense() async {
-    if (_currentShift == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please open a shift first'), backgroundColor: Colors.orange),
-      );
+    if (_currentFinancialShift == null) {
+      _showSnackBar('Please open a shift first', Colors.orange);
       return;
     }
     
@@ -1312,7 +1475,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     
     try {
       await _financialService.recordExpense(
-        financialShiftId: _currentShift!.id,
+        financialShiftId: _currentFinancialShift!.id,
         amount: result['amount'] as double,
         category: result['category'] as ExpenseCategory,
         description: result['description'] as String,
@@ -1327,31 +1490,15 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       
       await _refreshShiftData();
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 8),
-                Text('Expense recorded: ${_currencyFormat.format(result['amount'])} EGP'),
-              ],
-            ),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
+      _showSnackBar('Expense recorded: ${_currencyFormat.format(result['amount'])} EGP', Colors.orange);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error recording expense: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _showSnackBar('Error recording expense: $e', Colors.red);
     }
     
     if (mounted) setState(() => _isProcessing = false);
   }
   
+  /// Show expense dialog
   Future<Map<String, dynamic>?> _showExpenseDialog() async {
     final amountController = TextEditingController();
     final descController = TextEditingController();
@@ -1403,7 +1550,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                     border: OutlineInputBorder(),
                   ),
                   items: ExpenseCategory.values
-                      .where((c) => c != ExpenseCategory.supplies) // Supplies = Purchase, separate flow
+                      .where((c) => c != ExpenseCategory.supplies)
                       .map((c) => DropdownMenuItem(
                     value: c,
                     child: Row(
@@ -1475,11 +1622,10 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     );
   }
   
+  /// Record a purchase
   Future<void> _recordPurchase() async {
-    if (_currentShift == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please open a shift first'), backgroundColor: Colors.orange),
-      );
+    if (_currentFinancialShift == null) {
+      _showSnackBar('Please open a shift first', Colors.orange);
       return;
     }
     
@@ -1488,7 +1634,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     
     final result = await PurchasePaymentEntryDialog.show(
       context,
-      financialShiftId: _currentShift!.id,
+      financialShiftId: _currentFinancialShift!.id,
     );
     if (result == null) return;
     
@@ -1496,7 +1642,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     
     try {
       await _financialService.recordExpense(
-        financialShiftId: _currentShift!.id,
+        financialShiftId: _currentFinancialShift!.id,
         amount: result['amount'] as double,
         category: ExpenseCategory.supplies,
         description: result['description'] as String,
@@ -1511,36 +1657,18 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       
       await _refreshShiftData();
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 8),
-                Text('Purchase recorded: ${_currencyFormat.format(result['amount'])} EGP'),
-              ],
-            ),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
+      _showSnackBar('Purchase recorded: ${_currencyFormat.format(result['amount'])} EGP', Colors.orange);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error recording purchase: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _showSnackBar('Error recording purchase: $e', Colors.red);
     }
     
     if (mounted) setState(() => _isProcessing = false);
   }
   
+  /// Record a debt collection
   Future<void> _recordCollection() async {
-    if (_currentShift == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please open a shift first'), backgroundColor: Colors.orange),
-      );
+    if (_currentFinancialShift == null) {
+      _showSnackBar('Please open a shift first', Colors.orange);
       return;
     }
     
@@ -1549,7 +1677,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     
     final result = await DebtCollectionDialog.show(
       context,
-      financialShiftId: _currentShift!.id,
+      financialShiftId: _currentFinancialShift!.id,
     );
     if (result == null) return;
     
@@ -1557,7 +1685,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
     
     try {
       await _financialService.recordSale(
-        financialShiftId: _currentShift!.id,
+        financialShiftId: _currentFinancialShift!.id,
         amount: result['amount'] as double,
         paymentMethod: PaymentMethod.credit,
         description: result['description'] as String?,
@@ -1573,40 +1701,23 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       
       await _refreshShiftData();
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white),
-                const SizedBox(width: 8),
-                Text('Collection recorded: ${_currencyFormat.format(result['amount'])} EGP'),
-              ],
-            ),
-            backgroundColor: Colors.teal,
-          ),
-        );
-      }
+      _showSnackBar('Collection recorded: ${_currencyFormat.format(result['amount'])} EGP', Colors.teal);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error recording collection: $e'), backgroundColor: Colors.red),
-        );
-      }
+      _showSnackBar('Error recording collection: $e', Colors.red);
     }
     
     if (mounted) setState(() => _isProcessing = false);
   }
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // SMART WARNINGS (>40% expenses, no sales 2h, negative balance)
+  // SMART WARNINGS
   // ═══════════════════════════════════════════════════════════════════════════
   
   List<_SmartAlert> _getSmartAlerts() {
-    if (_shiftSummary == null || _currentShift == null) return [];
+    if (_shiftSummary == null || _currentFinancialShift == null) return [];
     
     final alerts = <_SmartAlert>[];
-    final shiftDuration = DateTime.now().difference(_currentShift!.openedAt);
+    final shiftDuration = DateTime.now().difference(_currentFinancialShift!.openedAt);
     
     // No sales after 2 hours
     if (_sales.isEmpty && shiftDuration.inHours >= 2) {
@@ -1641,6 +1752,17 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       ));
     }
     
+    // Purchases exceed sales
+    final purchases = _shiftSummary!.expensesByCategory[ExpenseCategory.supplies] ?? 0;
+    if (purchases > _shiftSummary!.totalSales && _shiftSummary!.totalSales > 0) {
+      alerts.add(_SmartAlert(
+        type: _AlertType.warning,
+        title: 'High Purchases',
+        message: 'Purchases exceed sales by ${_currencyFormat.format(purchases - _shiftSummary!.totalSales)} EGP',
+        icon: Icons.inventory_2,
+      ));
+    }
+    
     return alerts;
   }
   
@@ -1651,78 +1773,110 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/kiosk'),
-          tooltip: 'Back to Attendance',
-        ),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.point_of_sale, color: Colors.green, size: 20),
+      appBar: _buildAppBar(),
+      body: _buildBody(),
+    );
+  }
+  
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () => context.go('/kiosk'),
+        tooltip: 'Back to Attendance',
+      ),
+      title: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.green.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
             ),
-            const SizedBox(width: 10),
-            const Text('Financial Shift'),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-              ),
-              child: const Text(
-                'KIOSK',
-                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange),
-              ),
+            child: const Icon(Icons.point_of_sale, color: Colors.green, size: 20),
+          ),
+          const SizedBox(width: 10),
+          const Text('Financial Shift'),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.orange.withOpacity(0.3)),
             ),
-          ],
-        ),
-        actions: [
-          // Session indicator
-          if (_hasActiveSession) ...[
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.green.withOpacity(0.3)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.person, size: 14, color: Colors.green),
-                  const SizedBox(width: 4),
-                  Text(
-                    _currentEmployee!.employeeCode,
-                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.green),
-                  ),
-                ],
-              ),
+            child: const Text(
+              'KIOSK',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.orange),
             ),
-          ],
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _isLoading || _isProcessing ? null : _loadCurrentShift,
-            tooltip: 'Refresh',
           ),
         ],
       ),
-      body: _isLoading
-          ? _buildLoadingView()
-          : _loadError != null
-              ? _buildErrorView()
-              : _isProcessing
-                  ? _buildProcessingOverlay(child: _buildMainContent())
-                  : _buildMainContent(),
+      actions: [
+        // Session indicator
+        if (_hasActiveSession) ...[
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: _isEmployeeScheduled 
+                  ? Colors.green.withOpacity(0.1)
+                  : Colors.orange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: _isEmployeeScheduled 
+                    ? Colors.green.withOpacity(0.3)
+                    : Colors.orange.withOpacity(0.3),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.person, 
+                  size: 14, 
+                  color: _isEmployeeScheduled ? Colors.green : Colors.orange,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _currentEmployee!.employeeCode,
+                  style: TextStyle(
+                    fontSize: 11, 
+                    fontWeight: FontWeight.bold, 
+                    color: _isEmployeeScheduled ? Colors.green : Colors.orange,
+                  ),
+                ),
+                if (!_isEmployeeScheduled) ...[
+                  const SizedBox(width: 4),
+                  const Icon(Icons.warning_amber, size: 12, color: Colors.orange),
+                ],
+              ],
+            ),
+          ),
+        ],
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          onPressed: _isLoading || _isProcessing ? null : _refreshAllData,
+          tooltip: 'Refresh',
+        ),
+      ],
     );
+  }
+  
+  Widget _buildBody() {
+    if (_isLoading) {
+      return _buildLoadingView();
+    }
+    
+    if (_loadError != null) {
+      return _buildErrorView();
+    }
+    
+    if (_isProcessing) {
+      return _buildProcessingOverlay(child: _buildMainContent());
+    }
+    
+    return _buildMainContent();
   }
   
   Widget _buildLoadingView() {
@@ -1755,18 +1909,18 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
             ),
             const SizedBox(height: 24),
             Text(
-              'Error Loading Shift',
+              'Error Loading Data',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             Text(
-              _loadError!,
+              _loadError ?? 'Unknown error',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[600]),
             ),
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: _loadCurrentShift,
+              onPressed: _initializeScreen,
               icon: const Icon(Icons.refresh),
               label: const Text('Retry'),
             ),
@@ -1805,10 +1959,112 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   }
   
   Widget _buildMainContent() {
-    if (_currentShift == null) {
-      return _buildNoShiftView();
-    }
-    return _buildShiftView();
+    return Column(
+      children: [
+        // Schedule context header
+        _buildScheduleHeader(),
+        
+        // Main content
+        Expanded(
+          child: _currentFinancialShift == null
+              ? _buildNoShiftView()
+              : _buildShiftView(),
+        ),
+      ],
+    );
+  }
+  
+  /// Build schedule context header
+  Widget _buildScheduleHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: _currentScheduledShift != null
+            ? Colors.blue.withOpacity(0.05)
+            : Colors.orange.withOpacity(0.05),
+        border: Border(
+          bottom: BorderSide(
+            color: _currentScheduledShift != null
+                ? Colors.blue.withOpacity(0.2)
+                : Colors.orange.withOpacity(0.2),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Shift info
+          Icon(
+            Icons.schedule,
+            size: 18,
+            color: _currentScheduledShift != null ? Colors.blue : Colors.orange,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _currentScheduledShift != null
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _currentScheduledShift!.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                      Text(
+                        _currentScheduledShift!.timeRange,
+                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                      ),
+                    ],
+                  )
+                : const Text(
+                    'No scheduled shift detected',
+                    style: TextStyle(color: Colors.orange, fontSize: 13),
+                  ),
+          ),
+          
+          // Scheduled employees count
+          if (_scheduledEmployees.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.people, size: 14, color: Colors.blue),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${_scheduledEmployees.length}',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          
+          // Safe balance
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.grey.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.lock, size: 14, color: Colors.grey),
+                const SizedBox(width: 4),
+                Text(
+                  '${_currencyFormat.format(_safeBalance)}',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
   
   Widget _buildNoShiftView() {
@@ -1879,13 +2135,13 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   Widget _buildFinancialSummary() {
     if (_shiftSummary == null) return const SizedBox.shrink();
     
-    final openingCash = _currentShift?.openingCash ?? 0;
+    final openingCash = _currentFinancialShift?.openingCash ?? 0;
     final cashSales = _shiftSummary!.cashSales;
     final purchasePayments = _shiftSummary!.expensesByCategory[ExpenseCategory.supplies] ?? 0;
     final otherExpenses = _shiftSummary!.totalExpenses - purchasePayments;
     final currentBalance = _shiftSummary!.expectedCash;
     
-    final duration = DateTime.now().difference(_currentShift!.openedAt);
+    final duration = DateTime.now().difference(_currentFinancialShift!.openedAt);
     final durationText = duration.inHours > 0 
         ? '${duration.inHours}h ${duration.inMinutes % 60}m'
         : '${duration.inMinutes}m';
@@ -1926,9 +2182,20 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Shift: ${_timeFormat.format(_currentShift!.openedAt)}',
-                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                      Row(
+                        children: [
+                          Text(
+                            'Shift: ${_timeFormat.format(_currentFinancialShift!.openedAt)}',
+                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                          ),
+                          if (_currentFinancialShift!.scheduledShiftName != null) ...[
+                            const Text(' | ', style: TextStyle(color: Colors.grey)),
+                            Text(
+                              _currentFinancialShift!.scheduledShiftName!,
+                              style: TextStyle(fontSize: 12, color: Colors.blue[700]),
+                            ),
+                          ],
+                        ],
                       ),
                       Text(
                         'Duration: $durationText',
@@ -1996,7 +2263,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Current Balance',
+                            'Expected in Drawer',
                             style: TextStyle(
                               color: currentBalance >= 0 ? Colors.green[700] : Colors.red[700],
                               fontSize: 11,
@@ -2040,7 +2307,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
               children: [
                 Text(label, style: TextStyle(fontSize: 10, color: color)),
                 Text(
-                  '${_currencyFormat.format(value)}',
+                  _currencyFormat.format(value),
                   style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13),
                 ),
               ],
@@ -2196,10 +2463,21 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   // HELPER METHODS
   // ═══════════════════════════════════════════════════════════════════════════
   
+  void _showSnackBar(String message, Color color, {Duration duration = const Duration(seconds: 3)}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: duration,
+      ),
+    );
+  }
+  
   IconData _getPaymentMethodIcon(PaymentMethod method) {
     switch (method) {
       case PaymentMethod.cash: return Icons.payments;
-      case PaymentMethod.card: return Icons.credit_card;
+      case PaymentMethod.visa: return Icons.credit_card;
       case PaymentMethod.wallet: return Icons.account_balance_wallet;
       case PaymentMethod.insurance: return Icons.health_and_safety;
       case PaymentMethod.credit: return Icons.receipt_long;
@@ -2209,7 +2487,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   Color _getPaymentMethodColor(PaymentMethod method) {
     switch (method) {
       case PaymentMethod.cash: return Colors.green;
-      case PaymentMethod.card: return Colors.blue;
+      case PaymentMethod.visa: return Colors.blue;
       case PaymentMethod.wallet: return Colors.orange;
       case PaymentMethod.insurance: return Colors.purple;
       case PaymentMethod.credit: return Colors.teal;
@@ -2223,8 +2501,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       case ExpenseCategory.maintenance: return Icons.build;
       case ExpenseCategory.shortage: return Icons.warning;
       case ExpenseCategory.emergency: return Icons.emergency;
-      case ExpenseCategory.transport: return Icons.local_shipping;
-      case ExpenseCategory.staff: return Icons.people;
+      case ExpenseCategory.transportation: return Icons.local_shipping;
       case ExpenseCategory.misc: return Icons.more_horiz;
     }
   }

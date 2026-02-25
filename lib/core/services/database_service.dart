@@ -767,6 +767,11 @@ class DatabaseService {
       await _migrateToV5(db);
     }
     
+    // Migration v5 -> v6: Schedule-driven financial shifts
+    if (oldVersion < 6) {
+      await _migrateToV6(db);
+    }
+    
     // Migration v3 -> v4: Employee-User integrity enhancements
     // This migration runs for all databases to ensure:
     // 1. Users without employees get employees provisioned
@@ -1057,6 +1062,45 @@ class DatabaseService {
     await _safeCreateIndex(db, 'idx_sync_queue_priority', 'sync_queue', 'priority');
     
     _logMigration('v5 migration completed: Cloud Sync Queue table created');
+  }
+  
+  /// Migration to v6: Schedule-driven financial shifts
+  Future<void> _migrateToV6(Database db) async {
+    _logMigration('Starting v6 migration: Schedule-driven financial shifts');
+    
+    // Add scheduled_shift_id to financial_shifts
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'scheduled_shift_id',
+      columnType: 'TEXT',
+    );
+    
+    // Add scheduled_shift_name to financial_shifts
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'scheduled_shift_name',
+      columnType: 'TEXT',
+    );
+    
+    // Add opened_by_employee_name to financial_shifts
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'opened_by_employee_name',
+      columnType: 'TEXT',
+    );
+    
+    // Create index for scheduled_shift_id
+    await _safeCreateIndex(
+      db,
+      'idx_financial_shifts_scheduled',
+      'financial_shifts',
+      'scheduled_shift_id',
+    );
+    
+    _logMigration('v6 migration completed: Schedule-driven financial shifts');
   }
   
   /// Migration for Employee-User integrity
