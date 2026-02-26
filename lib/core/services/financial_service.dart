@@ -308,7 +308,7 @@ class FinancialService {
     final salesByMethod = await getSalesBreakdown(financialShiftId);
     final totalSales = salesByMethod.values.fold(0.0, (sum, v) => sum + v);
     final totalCashSales = salesByMethod[PaymentMethod.cash] ?? 0;
-    final totalCardSales = salesByMethod[PaymentMethod.visa] ?? 0;
+    final totalCardSales = salesByMethod[PaymentMethod.card] ?? 0;
     final totalWalletSales = salesByMethod[PaymentMethod.wallet] ?? 0;
     final totalInsuranceSales = salesByMethod[PaymentMethod.insurance] ?? 0;
     final totalCreditSales = salesByMethod[PaymentMethod.credit] ?? 0;
@@ -688,7 +688,7 @@ class ShiftSummary {
   double get cashSales => salesByMethod[PaymentMethod.cash] ?? 0;
 
   /// Card/Visa sales only
-  double get cardSales => salesByMethod[PaymentMethod.visa] ?? 0;
+  double get cardSales => salesByMethod[PaymentMethod.card] ?? 0;
 
   /// Wallet sales only
   double get walletSales => salesByMethod[PaymentMethod.wallet] ?? 0;

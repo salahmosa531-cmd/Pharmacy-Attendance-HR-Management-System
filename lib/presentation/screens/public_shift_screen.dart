@@ -448,7 +448,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                 final confirmed = await _showUnscheduledAccessDialog(employee);
                 if (confirmed == true) {
                   _startSession(employee);
-                  return employee;
+                  // Note: Employee is returned via _currentEmployee after _startSession
                 }
                 return;
               }
@@ -2477,7 +2477,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   IconData _getPaymentMethodIcon(PaymentMethod method) {
     switch (method) {
       case PaymentMethod.cash: return Icons.payments;
-      case PaymentMethod.visa: return Icons.credit_card;
+      case PaymentMethod.card: return Icons.credit_card;
       case PaymentMethod.wallet: return Icons.account_balance_wallet;
       case PaymentMethod.insurance: return Icons.health_and_safety;
       case PaymentMethod.credit: return Icons.receipt_long;
@@ -2487,7 +2487,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   Color _getPaymentMethodColor(PaymentMethod method) {
     switch (method) {
       case PaymentMethod.cash: return Colors.green;
-      case PaymentMethod.visa: return Colors.blue;
+      case PaymentMethod.card: return Colors.blue;
       case PaymentMethod.wallet: return Colors.orange;
       case PaymentMethod.insurance: return Colors.purple;
       case PaymentMethod.credit: return Colors.teal;
@@ -2501,7 +2501,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       case ExpenseCategory.maintenance: return Icons.build;
       case ExpenseCategory.shortage: return Icons.warning;
       case ExpenseCategory.emergency: return Icons.emergency;
-      case ExpenseCategory.transportation: return Icons.local_shipping;
+      case ExpenseCategory.transport: return Icons.local_shipping;
       case ExpenseCategory.misc: return Icons.more_horiz;
     }
   }
