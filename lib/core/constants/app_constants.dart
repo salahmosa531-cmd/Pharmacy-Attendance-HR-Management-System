@@ -404,49 +404,9 @@ extension LicenseTypeExtension on LicenseType {
 // FINANCIAL MANAGEMENT ENUMS
 // ============================================================================
 
-/// Financial shift status
-enum FinancialShiftStatus {
-  open,
-  closed,
-  pending,
-}
-
-extension FinancialShiftStatusExtension on FinancialShiftStatus {
-  String get displayName {
-    switch (this) {
-      case FinancialShiftStatus.open:
-        return 'Open';
-      case FinancialShiftStatus.closed:
-        return 'Closed';
-      case FinancialShiftStatus.pending:
-        return 'Pending Review';
-    }
-  }
-  
-  String get value {
-    switch (this) {
-      case FinancialShiftStatus.open:
-        return 'open';
-      case FinancialShiftStatus.closed:
-        return 'closed';
-      case FinancialShiftStatus.pending:
-        return 'pending';
-    }
-  }
-  
-  static FinancialShiftStatus fromString(String value) {
-    switch (value) {
-      case 'open':
-        return FinancialShiftStatus.open;
-      case 'closed':
-        return FinancialShiftStatus.closed;
-      case 'pending':
-        return FinancialShiftStatus.pending;
-      default:
-        return FinancialShiftStatus.open;
-    }
-  }
-}
+// NOTE: FinancialShiftStatus is defined in financial_shift_model.dart
+// to keep it close to its primary usage. Import from there or from
+// core/enums/financial_enums.dart for convenience.
 
 /// Payment method for sales
 enum PaymentMethod {

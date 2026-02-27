@@ -40,7 +40,7 @@ class ShiftExpense extends Equatable {
       branchId: map['branch_id'] as String,
       amount: (map['amount'] as num?)?.toDouble() ?? 0,
       category: ExpenseCategoryExtension.fromString(map['category'] as String? ?? 'misc'),
-      description: map['description'] as String,
+      description: map['description'] as String? ?? '',
       receiptNumber: map['receipt_number'] as String?,
       recordedBy: map['recorded_by'] as String?,
       approvedBy: map['approved_by'] as String?,
