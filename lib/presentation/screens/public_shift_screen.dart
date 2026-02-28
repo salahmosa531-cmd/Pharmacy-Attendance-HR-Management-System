@@ -849,7 +849,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       LoggingService.instance.audit(
         'PublicShift',
         'SHIFT_CLOSED',
-        'Shift closed successfully',
+        '[SHIFT_CLOSED] Shift closed successfully',
         details: {
           'shift_id': _currentFinancialShift!.id,
           'employee_id': employee.id,
