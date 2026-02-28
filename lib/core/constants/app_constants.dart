@@ -404,57 +404,20 @@ extension LicenseTypeExtension on LicenseType {
 // FINANCIAL MANAGEMENT ENUMS
 // ============================================================================
 
-/// Financial shift status
-enum FinancialShiftStatus {
-  open,
-  closed,
-  pending,
-}
-
-extension FinancialShiftStatusExtension on FinancialShiftStatus {
-  String get displayName {
-    switch (this) {
-      case FinancialShiftStatus.open:
-        return 'Open';
-      case FinancialShiftStatus.closed:
-        return 'Closed';
-      case FinancialShiftStatus.pending:
-        return 'Pending Review';
-    }
-  }
-  
-  String get value {
-    switch (this) {
-      case FinancialShiftStatus.open:
-        return 'open';
-      case FinancialShiftStatus.closed:
-        return 'closed';
-      case FinancialShiftStatus.pending:
-        return 'pending';
-    }
-  }
-  
-  static FinancialShiftStatus fromString(String value) {
-    switch (value) {
-      case 'open':
-        return FinancialShiftStatus.open;
-      case 'closed':
-        return FinancialShiftStatus.closed;
-      case 'pending':
-        return FinancialShiftStatus.pending;
-      default:
-        return FinancialShiftStatus.open;
-    }
-  }
-}
+// NOTE: FinancialShiftStatus is defined in financial_shift_model.dart
+// to keep it close to its primary usage. Import from there or from
+// core/enums/financial_enums.dart for convenience.
 
 /// Payment method for sales
 enum PaymentMethod {
   cash,
-  visa,
+  card, // Card/Visa payments
   wallet,
   insurance,
-  credit,
+  credit;
+
+  /// Alias for card (backwards compatibility)
+  static PaymentMethod get visa => card;
 }
 
 extension PaymentMethodExtension on PaymentMethod {
@@ -462,7 +425,7 @@ extension PaymentMethodExtension on PaymentMethod {
     switch (this) {
       case PaymentMethod.cash:
         return 'Cash';
-      case PaymentMethod.visa:
+      case PaymentMethod.card:
         return 'Visa/Card';
       case PaymentMethod.wallet:
         return 'E-Wallet';
@@ -477,8 +440,8 @@ extension PaymentMethodExtension on PaymentMethod {
     switch (this) {
       case PaymentMethod.cash:
         return 'cash';
-      case PaymentMethod.visa:
-        return 'visa';
+      case PaymentMethod.card:
+        return 'card';
       case PaymentMethod.wallet:
         return 'wallet';
       case PaymentMethod.insurance:
@@ -492,8 +455,9 @@ extension PaymentMethodExtension on PaymentMethod {
     switch (value) {
       case 'cash':
         return PaymentMethod.cash;
-      case 'visa':
-        return PaymentMethod.visa;
+      case 'card':
+      case 'visa': // backwards compatibility
+        return PaymentMethod.card;
       case 'wallet':
         return PaymentMethod.wallet;
       case 'insurance':
@@ -513,8 +477,11 @@ enum ExpenseCategory {
   emergency,
   supplies,
   maintenance,
-  transportation,
-  misc,
+  transport, // Transportation expenses
+  misc;
+
+  /// Alias for transport (backwards compatibility)
+  static ExpenseCategory get transportation => transport;
 }
 
 extension ExpenseCategoryExtension on ExpenseCategory {
@@ -530,7 +497,7 @@ extension ExpenseCategoryExtension on ExpenseCategory {
         return 'Supplies';
       case ExpenseCategory.maintenance:
         return 'Maintenance';
-      case ExpenseCategory.transportation:
+      case ExpenseCategory.transport:
         return 'Transportation';
       case ExpenseCategory.misc:
         return 'Miscellaneous';
@@ -549,8 +516,8 @@ extension ExpenseCategoryExtension on ExpenseCategory {
         return 'supplies';
       case ExpenseCategory.maintenance:
         return 'maintenance';
-      case ExpenseCategory.transportation:
-        return 'transportation';
+      case ExpenseCategory.transport:
+        return 'transport';
       case ExpenseCategory.misc:
         return 'misc';
     }
@@ -568,8 +535,9 @@ extension ExpenseCategoryExtension on ExpenseCategory {
         return ExpenseCategory.supplies;
       case 'maintenance':
         return ExpenseCategory.maintenance;
-      case 'transportation':
-        return ExpenseCategory.transportation;
+      case 'transport':
+      case 'transportation': // backwards compatibility
+        return ExpenseCategory.transport;
       case 'misc':
         return ExpenseCategory.misc;
       default:

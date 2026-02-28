@@ -395,7 +395,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   Future<Employee?> _showEmployeeCodeDialog({bool requireScheduled = false}) async {
     _codeController.clear();
     
-    return showDialog<Employee>(
+    final result = await showDialog<Employee>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
@@ -441,14 +441,18 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                 // Show warning but allow with confirmation
                 setDialogState(() => isVerifying = false);
                 
+                // Close current dialog first
                 if (dialogContext.mounted) {
                   Navigator.pop(dialogContext);
                 }
                 
+                // Show unscheduled access warning dialog
                 final confirmed = await _showUnscheduledAccessDialog(employee);
                 if (confirmed == true) {
                   _startSession(employee);
-                  return employee;
+                  // The showDialog already returned null since we popped it.
+                  // The employee is now in _currentEmployee via _startSession.
+                  // Caller should check _currentEmployee if result is null.
                 }
                 return;
               }
@@ -588,6 +592,14 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
         },
       ),
     );
+    
+    // If result is null, check if employee was set via _startSession
+    // (happens when unscheduled employee confirms access)
+    if (result == null && _currentEmployee != null && _hasActiveSession) {
+      return _currentEmployee;
+    }
+    
+    return result;
   }
   
   /// Show dialog when unscheduled employee tries to access
@@ -673,7 +685,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                 severity: NotificationSeverity.warning,
               );
               
-              _startSession(employee);
+              // Note: _startSession is called by the caller after this dialog returns true
               Navigator.pop(context, true);
             },
             child: const Text('Continue Anyway'),
@@ -837,7 +849,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       LoggingService.instance.audit(
         'PublicShift',
         'SHIFT_CLOSED',
-        'Shift closed successfully',
+        '[SHIFT_CLOSED] Shift closed successfully',
         details: {
           'shift_id': _currentFinancialShift!.id,
           'employee_id': employee.id,
@@ -2477,7 +2489,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   IconData _getPaymentMethodIcon(PaymentMethod method) {
     switch (method) {
       case PaymentMethod.cash: return Icons.payments;
-      case PaymentMethod.visa: return Icons.credit_card;
+      case PaymentMethod.card: return Icons.credit_card;
       case PaymentMethod.wallet: return Icons.account_balance_wallet;
       case PaymentMethod.insurance: return Icons.health_and_safety;
       case PaymentMethod.credit: return Icons.receipt_long;
@@ -2487,7 +2499,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   Color _getPaymentMethodColor(PaymentMethod method) {
     switch (method) {
       case PaymentMethod.cash: return Colors.green;
-      case PaymentMethod.visa: return Colors.blue;
+      case PaymentMethod.card: return Colors.blue;
       case PaymentMethod.wallet: return Colors.orange;
       case PaymentMethod.insurance: return Colors.purple;
       case PaymentMethod.credit: return Colors.teal;
@@ -2501,7 +2513,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       case ExpenseCategory.maintenance: return Icons.build;
       case ExpenseCategory.shortage: return Icons.warning;
       case ExpenseCategory.emergency: return Icons.emergency;
-      case ExpenseCategory.transportation: return Icons.local_shipping;
+      case ExpenseCategory.transport: return Icons.local_shipping;
       case ExpenseCategory.misc: return Icons.more_horiz;
     }
   }

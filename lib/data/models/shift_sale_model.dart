@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import '../../core/constants/app_constants.dart';
 
 /// Represents a sale transaction during a financial shift
 /// 
@@ -39,7 +40,7 @@ class ShiftSale extends Equatable {
       financialShiftId: map['financial_shift_id'] as String,
       branchId: map['branch_id'] as String,
       amount: (map['amount'] as num?)?.toDouble() ?? 0,
-      paymentMethod: PaymentMethod.fromString(map['payment_method'] as String? ?? 'cash'),
+      paymentMethod: PaymentMethodExtension.fromString(map['payment_method'] as String? ?? 'cash'),
       description: map['description'] as String?,
       invoiceNumber: map['invoice_number'] as String?,
       customerName: map['customer_name'] as String?,
@@ -106,26 +107,4 @@ class ShiftSale extends Equatable {
     description, invoiceNumber, customerName, recordedBy,
     createdAt, syncedAt,
   ];
-}
-
-/// Payment method enum
-enum PaymentMethod {
-  cash('cash', 'Cash', 'Payment in cash'),
-  card('card', 'Card/Visa', 'Credit or debit card payment'),
-  wallet('wallet', 'E-Wallet', 'Vodafone Cash, Fawry, etc.'),
-  insurance('insurance', 'Insurance', 'Insurance claim payment'),
-  credit('credit', 'Credit/Account', 'Customer account/credit sale');
-
-  final String value;
-  final String displayName;
-  final String description;
-
-  const PaymentMethod(this.value, this.displayName, this.description);
-
-  static PaymentMethod fromString(String value) {
-    return PaymentMethod.values.firstWhere(
-      (m) => m.value == value,
-      orElse: () => PaymentMethod.cash,
-    );
-  }
 }
