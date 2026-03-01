@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import '../../core/enums/financial_enums.dart';
 
 /// Represents a transaction with a supplier (purchase or payment)
 /// 

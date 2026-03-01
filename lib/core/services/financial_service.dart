@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import '../enums/financial_enums.dart';
 import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';

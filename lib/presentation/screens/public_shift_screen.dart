@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/enums/financial_enums.dart';
 import '../../core/services/financial_service.dart';
 import '../../core/services/logging_service.dart';
 import '../../core/services/notifications_service.dart';
@@ -235,7 +236,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       _sales = await _financialService.getSalesForShift(_currentFinancialShift!.id);
       _expenses = await _financialService.getExpensesForShift(_currentFinancialShift!.id);
       _safeBalance = await _safeService.getCurrentBalance();
-      _buildTimeline();
+      _populateTimeline();
       
       if (mounted) setState(() {});
     } catch (e) {
@@ -244,7 +245,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   }
   
   /// Build timeline from sales and expenses
-  void _buildTimeline() {
+  void _populateTimeline() {
     _timeline = [];
     
     for (final sale in _sales) {
