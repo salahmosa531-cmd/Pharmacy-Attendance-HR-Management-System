@@ -1,5 +1,5 @@
 import 'package:equatable/equatable.dart';
-import '../../core/constants/app_constants.dart';
+import '../../core/enums/financial_enums.dart';
 
 /// Represents a sale transaction during a financial shift
 /// 

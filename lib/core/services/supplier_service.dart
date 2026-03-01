@@ -1,4 +1,5 @@
 import 'package:uuid/uuid.dart';
+import '../enums/financial_enums.dart';
 import '../../data/models/supplier_model.dart';
 import '../../data/models/supplier_transaction_model.dart';
 import '../../data/repositories/supplier_repository.dart';
@@ -275,7 +276,7 @@ class SupplierService {
       id: _uuid.v4(),
       supplierId: supplierId,
       branchId: '1', // SINGLE-BRANCH: Hardcoded
-      transactionType: SupplierTransactionType.returnGoods,
+      transactionType: SupplierTransactionType.refund, // Return goods = refund
       amount: amount,
       invoiceNumber: invoiceNumber,
       notes: notes,
