@@ -1,5 +1,5 @@
 import 'package:equatable/equatable.dart';
-import '../../core/constants/app_constants.dart';
+import '../../core/enums/financial_enums.dart';
 
 /// Represents an expense during a financial shift
 /// 
@@ -39,8 +39,8 @@ class ShiftExpense extends Equatable {
       financialShiftId: map['financial_shift_id'] as String,
       branchId: map['branch_id'] as String,
       amount: (map['amount'] as num?)?.toDouble() ?? 0,
-      category: ExpenseCategoryExtension.fromString(map['category'] as String? ?? 'misc'),
-      description: map['description'] as String,
+      category: ExpenseCategory.fromString(map['category'] as String? ?? 'misc'),
+      description: map['description'] as String? ?? '',
       receiptNumber: map['receipt_number'] as String?,
       recordedBy: map['recorded_by'] as String?,
       approvedBy: map['approved_by'] as String?,

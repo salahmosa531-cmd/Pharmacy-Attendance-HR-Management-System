@@ -65,10 +65,10 @@ class Employee extends Equatable {
       barcodeSerial: map['barcode_serial'] as String?,
       fingerprintId: map['fingerprint_id'] as String?,
       assignedShiftId: map['assigned_shift_id'] as String?,
-      salaryType: SalaryTypeExtension.fromString(map['salary_type'] as String? ?? 'monthly'),
+      salaryType: SalaryType.fromString(map['salary_type'] as String? ?? 'monthly'),
       salaryValue: (map['salary_value'] as num?)?.toDouble() ?? 0,
       overtimeRate: (map['overtime_rate'] as num?)?.toDouble(),
-      status: EmployeeStatusExtension.fromString(map['status'] as String? ?? 'active'),
+      status: EmployeeStatus.fromString(map['status'] as String? ?? 'active'),
       hireDate: map['hire_date'] != null
           ? DateTime.parse(map['hire_date'] as String)
           : null,

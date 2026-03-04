@@ -38,8 +38,8 @@ class AuditLog extends Equatable {
       id: map['id'] as String,
       branchId: map['branch_id'] as String?,
       userId: map['user_id'] as String?,
-      action: AuditActionExtension.fromString(map['action'] as String),
-      entityType: AuditEntityTypeExtension.fromString(map['entity_type'] as String),
+      action: AuditAction.fromString(map['action'] as String),
+      entityType: AuditEntityType.fromString(map['entity_type'] as String),
       entityId: map['entity_id'] as String? ?? '',
       oldValues: map['old_values'] != null
           ? jsonDecode(map['old_values'] as String) as Map<String, dynamic>
@@ -112,7 +112,50 @@ enum AuditAction {
   settingsChange,
   generateReport,
   exportData,
-  importData,
+  importData;
+
+  static AuditAction fromString(String value) {
+    switch (value) {
+      case 'CREATE':
+        return AuditAction.create;
+      case 'UPDATE':
+        return AuditAction.update;
+      case 'DELETE':
+        return AuditAction.delete;
+      case 'LOGIN':
+        return AuditAction.login;
+      case 'LOGOUT':
+        return AuditAction.logout;
+      case 'CLOCK_IN':
+        return AuditAction.clockIn;
+      case 'CLOCK_OUT':
+        return AuditAction.clockOut;
+      case 'MANUAL_OVERRIDE':
+        return AuditAction.manualOverride;
+      case 'FORGIVE_LATENESS':
+        return AuditAction.forgiveLateness;
+      case 'SYNC':
+        return AuditAction.sync;
+      case 'DEVICE_AUTHORIZE':
+        return AuditAction.deviceAuthorize;
+      case 'DEVICE_REVOKE':
+        return AuditAction.deviceRevoke;
+      case 'BACKUP':
+        return AuditAction.backup;
+      case 'RESTORE':
+        return AuditAction.restore;
+      case 'SETTINGS_CHANGE':
+        return AuditAction.settingsChange;
+      case 'GENERATE_REPORT':
+        return AuditAction.generateReport;
+      case 'EXPORT_DATA':
+        return AuditAction.exportData;
+      case 'IMPORT_DATA':
+        return AuditAction.importData;
+      default:
+        return AuditAction.create;
+    }
+  }
 }
 
 extension AuditActionExtension on AuditAction {
@@ -197,49 +240,6 @@ extension AuditActionExtension on AuditAction {
         return 'Data Imported';
     }
   }
-
-  static AuditAction fromString(String value) {
-    switch (value) {
-      case 'CREATE':
-        return AuditAction.create;
-      case 'UPDATE':
-        return AuditAction.update;
-      case 'DELETE':
-        return AuditAction.delete;
-      case 'LOGIN':
-        return AuditAction.login;
-      case 'LOGOUT':
-        return AuditAction.logout;
-      case 'CLOCK_IN':
-        return AuditAction.clockIn;
-      case 'CLOCK_OUT':
-        return AuditAction.clockOut;
-      case 'MANUAL_OVERRIDE':
-        return AuditAction.manualOverride;
-      case 'FORGIVE_LATENESS':
-        return AuditAction.forgiveLateness;
-      case 'SYNC':
-        return AuditAction.sync;
-      case 'DEVICE_AUTHORIZE':
-        return AuditAction.deviceAuthorize;
-      case 'DEVICE_REVOKE':
-        return AuditAction.deviceRevoke;
-      case 'BACKUP':
-        return AuditAction.backup;
-      case 'RESTORE':
-        return AuditAction.restore;
-      case 'SETTINGS_CHANGE':
-        return AuditAction.settingsChange;
-      case 'GENERATE_REPORT':
-        return AuditAction.generateReport;
-      case 'EXPORT_DATA':
-        return AuditAction.exportData;
-      case 'IMPORT_DATA':
-        return AuditAction.importData;
-      default:
-        return AuditAction.create;
-    }
-  }
 }
 
 /// Entity types for audit logging
@@ -250,7 +250,28 @@ enum AuditEntityType {
   attendance,
   branch,
   settings,
-  device,
+  device;
+
+  static AuditEntityType fromString(String value) {
+    switch (value) {
+      case 'USER':
+        return AuditEntityType.user;
+      case 'EMPLOYEE':
+        return AuditEntityType.employee;
+      case 'SHIFT':
+        return AuditEntityType.shift;
+      case 'ATTENDANCE':
+        return AuditEntityType.attendance;
+      case 'BRANCH':
+        return AuditEntityType.branch;
+      case 'SETTINGS':
+        return AuditEntityType.settings;
+      case 'DEVICE':
+        return AuditEntityType.device;
+      default:
+        return AuditEntityType.user;
+    }
+  }
 }
 
 extension AuditEntityTypeExtension on AuditEntityType {
@@ -289,27 +310,6 @@ extension AuditEntityTypeExtension on AuditEntityType {
         return 'Settings';
       case AuditEntityType.device:
         return 'Device';
-    }
-  }
-
-  static AuditEntityType fromString(String value) {
-    switch (value) {
-      case 'USER':
-        return AuditEntityType.user;
-      case 'EMPLOYEE':
-        return AuditEntityType.employee;
-      case 'SHIFT':
-        return AuditEntityType.shift;
-      case 'ATTENDANCE':
-        return AuditEntityType.attendance;
-      case 'BRANCH':
-        return AuditEntityType.branch;
-      case 'SETTINGS':
-        return AuditEntityType.settings;
-      case 'DEVICE':
-        return AuditEntityType.device;
-      default:
-        return AuditEntityType.user;
     }
   }
 }

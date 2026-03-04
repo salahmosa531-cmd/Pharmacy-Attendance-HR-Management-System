@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'package:intl/intl.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/enums/financial_enums.dart';
 import '../../core/services/financial_service.dart';
 import '../../core/services/logging_service.dart';
 import '../../core/services/notifications_service.dart';
@@ -235,7 +236,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       _sales = await _financialService.getSalesForShift(_currentFinancialShift!.id);
       _expenses = await _financialService.getExpensesForShift(_currentFinancialShift!.id);
       _safeBalance = await _safeService.getCurrentBalance();
-      _buildTimeline();
+      _populateTimeline();
       
       if (mounted) setState(() {});
     } catch (e) {
@@ -244,7 +245,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   }
   
   /// Build timeline from sales and expenses
-  void _buildTimeline() {
+  void _populateTimeline() {
     _timeline = [];
     
     for (final sale in _sales) {
@@ -395,7 +396,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   Future<Employee?> _showEmployeeCodeDialog({bool requireScheduled = false}) async {
     _codeController.clear();
     
-    return showDialog<Employee>(
+    final result = await showDialog<Employee>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
@@ -441,14 +442,18 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                 // Show warning but allow with confirmation
                 setDialogState(() => isVerifying = false);
                 
+                // Close current dialog first
                 if (dialogContext.mounted) {
                   Navigator.pop(dialogContext);
                 }
                 
+                // Show unscheduled access warning dialog
                 final confirmed = await _showUnscheduledAccessDialog(employee);
                 if (confirmed == true) {
                   _startSession(employee);
-                  // Note: Employee is returned via _currentEmployee after _startSession
+                  // The showDialog already returned null since we popped it.
+                  // The employee is now in _currentEmployee via _startSession.
+                  // Caller should check _currentEmployee if result is null.
                 }
                 return;
               }
@@ -588,6 +593,14 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
         },
       ),
     );
+    
+    // If result is null, check if employee was set via _startSession
+    // (happens when unscheduled employee confirms access)
+    if (result == null && _currentEmployee != null && _hasActiveSession) {
+      return _currentEmployee;
+    }
+    
+    return result;
   }
   
   /// Show dialog when unscheduled employee tries to access
@@ -673,7 +686,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
                 severity: NotificationSeverity.warning,
               );
               
-              _startSession(employee);
+              // Note: _startSession is called by the caller after this dialog returns true
               Navigator.pop(context, true);
             },
             child: const Text('Continue Anyway'),
@@ -837,7 +850,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       LoggingService.instance.audit(
         'PublicShift',
         'SHIFT_CLOSED',
-        'Shift closed successfully',
+        '[SHIFT_CLOSED] Shift closed successfully',
         details: {
           'shift_id': _currentFinancialShift!.id,
           'employee_id': employee.id,

@@ -7,7 +7,7 @@ class AppConstants {
   
   // Database
   static const String databaseName = 'pharmacy_attendance.db';
-  static const int databaseVersion = 6; // v6: Schedule-driven financial shifts
+  static const int databaseVersion = 8; // v8: Schedule-driven financial shifts
   
   // Subscription/Trial
   static const int trialPeriodDays = 30;
@@ -53,7 +53,20 @@ class AppConstants {
 enum SalaryType {
   monthly,
   hourly,
-  perShift,
+  perShift;
+
+  static SalaryType fromString(String value) {
+    switch (value) {
+      case 'monthly':
+        return SalaryType.monthly;
+      case 'hourly':
+        return SalaryType.hourly;
+      case 'per_shift':
+        return SalaryType.perShift;
+      default:
+        return SalaryType.monthly;
+    }
+  }
 }
 
 extension SalaryTypeExtension on SalaryType {
@@ -78,19 +91,6 @@ extension SalaryTypeExtension on SalaryType {
         return 'per_shift';
     }
   }
-  
-  static SalaryType fromString(String value) {
-    switch (value) {
-      case 'monthly':
-        return SalaryType.monthly;
-      case 'hourly':
-        return SalaryType.hourly;
-      case 'per_shift':
-        return SalaryType.perShift;
-      default:
-        return SalaryType.monthly;
-    }
-  }
 }
 
 /// Employee status enum
@@ -98,7 +98,22 @@ enum EmployeeStatus {
   active,
   inactive,
   suspended,
-  terminated,
+  terminated;
+
+  static EmployeeStatus fromString(String value) {
+    switch (value) {
+      case 'active':
+        return EmployeeStatus.active;
+      case 'inactive':
+        return EmployeeStatus.inactive;
+      case 'suspended':
+        return EmployeeStatus.suspended;
+      case 'terminated':
+        return EmployeeStatus.terminated;
+      default:
+        return EmployeeStatus.active;
+    }
+  }
 }
 
 extension EmployeeStatusExtension on EmployeeStatus {
@@ -127,21 +142,6 @@ extension EmployeeStatusExtension on EmployeeStatus {
         return 'terminated';
     }
   }
-  
-  static EmployeeStatus fromString(String value) {
-    switch (value) {
-      case 'active':
-        return EmployeeStatus.active;
-      case 'inactive':
-        return EmployeeStatus.inactive;
-      case 'suspended':
-        return EmployeeStatus.suspended;
-      case 'terminated':
-        return EmployeeStatus.terminated;
-      default:
-        return EmployeeStatus.active;
-    }
-  }
 }
 
 /// Attendance status enum
@@ -152,7 +152,28 @@ enum AttendanceStatus {
   earlyLeave,
   halfDay,
   onLeave,
-  holiday,
+  holiday;
+
+  static AttendanceStatus fromString(String value) {
+    switch (value) {
+      case 'present':
+        return AttendanceStatus.present;
+      case 'absent':
+        return AttendanceStatus.absent;
+      case 'late':
+        return AttendanceStatus.late;
+      case 'early_leave':
+        return AttendanceStatus.earlyLeave;
+      case 'half_day':
+        return AttendanceStatus.halfDay;
+      case 'on_leave':
+        return AttendanceStatus.onLeave;
+      case 'holiday':
+        return AttendanceStatus.holiday;
+      default:
+        return AttendanceStatus.present;
+    }
+  }
 }
 
 extension AttendanceStatusExtension on AttendanceStatus {
@@ -193,27 +214,6 @@ extension AttendanceStatusExtension on AttendanceStatus {
         return 'holiday';
     }
   }
-  
-  static AttendanceStatus fromString(String value) {
-    switch (value) {
-      case 'present':
-        return AttendanceStatus.present;
-      case 'absent':
-        return AttendanceStatus.absent;
-      case 'late':
-        return AttendanceStatus.late;
-      case 'early_leave':
-        return AttendanceStatus.earlyLeave;
-      case 'half_day':
-        return AttendanceStatus.halfDay;
-      case 'on_leave':
-        return AttendanceStatus.onLeave;
-      case 'holiday':
-        return AttendanceStatus.holiday;
-      default:
-        return AttendanceStatus.present;
-    }
-  }
 }
 
 /// User role enum
@@ -221,7 +221,22 @@ enum UserRole {
   superAdmin,
   admin,
   manager,
-  employee,
+  employee;
+
+  static UserRole fromString(String value) {
+    switch (value) {
+      case 'super_admin':
+        return UserRole.superAdmin;
+      case 'admin':
+        return UserRole.admin;
+      case 'manager':
+        return UserRole.manager;
+      case 'employee':
+        return UserRole.employee;
+      default:
+        return UserRole.employee;
+    }
+  }
 }
 
 extension UserRoleExtension on UserRole {
@@ -248,21 +263,6 @@ extension UserRoleExtension on UserRole {
         return 'manager';
       case UserRole.employee:
         return 'employee';
-    }
-  }
-  
-  static UserRole fromString(String value) {
-    switch (value) {
-      case 'super_admin':
-        return UserRole.superAdmin;
-      case 'admin':
-        return UserRole.admin;
-      case 'manager':
-        return UserRole.manager;
-      case 'employee':
-        return UserRole.employee;
-      default:
-        return UserRole.employee;
     }
   }
   
@@ -298,7 +298,26 @@ enum AttendanceMethod {
   qrCode,
   fingerprint,
   nfc,
-  faceRecognition,
+  faceRecognition;
+
+  static AttendanceMethod fromString(String value) {
+    switch (value) {
+      case 'manual':
+        return AttendanceMethod.manual;
+      case 'barcode':
+        return AttendanceMethod.barcode;
+      case 'qr_code':
+        return AttendanceMethod.qrCode;
+      case 'fingerprint':
+        return AttendanceMethod.fingerprint;
+      case 'nfc':
+        return AttendanceMethod.nfc;
+      case 'face_recognition':
+        return AttendanceMethod.faceRecognition;
+      default:
+        return AttendanceMethod.manual;
+    }
+  }
 }
 
 extension AttendanceMethodExtension on AttendanceMethod {
@@ -335,32 +354,26 @@ extension AttendanceMethodExtension on AttendanceMethod {
         return 'face_recognition';
     }
   }
-  
-  static AttendanceMethod fromString(String value) {
-    switch (value) {
-      case 'manual':
-        return AttendanceMethod.manual;
-      case 'barcode':
-        return AttendanceMethod.barcode;
-      case 'qr_code':
-        return AttendanceMethod.qrCode;
-      case 'fingerprint':
-        return AttendanceMethod.fingerprint;
-      case 'nfc':
-        return AttendanceMethod.nfc;
-      case 'face_recognition':
-        return AttendanceMethod.faceRecognition;
-      default:
-        return AttendanceMethod.manual;
-    }
-  }
 }
 
 /// License type enum
 enum LicenseType {
   trial,
   lifetime,
-  subscription,
+  subscription;
+
+  static LicenseType fromString(String value) {
+    switch (value) {
+      case 'trial':
+        return LicenseType.trial;
+      case 'lifetime':
+        return LicenseType.lifetime;
+      case 'subscription':
+        return LicenseType.subscription;
+      default:
+        return LicenseType.trial;
+    }
+  }
 }
 
 extension LicenseTypeExtension on LicenseType {
@@ -385,265 +398,14 @@ extension LicenseTypeExtension on LicenseType {
         return 'subscription';
     }
   }
-  
-  static LicenseType fromString(String value) {
-    switch (value) {
-      case 'trial':
-        return LicenseType.trial;
-      case 'lifetime':
-        return LicenseType.lifetime;
-      case 'subscription':
-        return LicenseType.subscription;
-      default:
-        return LicenseType.trial;
-    }
-  }
 }
 
 // ============================================================================
 // FINANCIAL MANAGEMENT ENUMS
 // ============================================================================
-
-/// Financial shift status
-enum FinancialShiftStatus {
-  open,
-  closed,
-  pending,
-}
-
-extension FinancialShiftStatusExtension on FinancialShiftStatus {
-  String get displayName {
-    switch (this) {
-      case FinancialShiftStatus.open:
-        return 'Open';
-      case FinancialShiftStatus.closed:
-        return 'Closed';
-      case FinancialShiftStatus.pending:
-        return 'Pending Review';
-    }
-  }
-  
-  String get value {
-    switch (this) {
-      case FinancialShiftStatus.open:
-        return 'open';
-      case FinancialShiftStatus.closed:
-        return 'closed';
-      case FinancialShiftStatus.pending:
-        return 'pending';
-    }
-  }
-  
-  static FinancialShiftStatus fromString(String value) {
-    switch (value) {
-      case 'open':
-        return FinancialShiftStatus.open;
-      case 'closed':
-        return FinancialShiftStatus.closed;
-      case 'pending':
-        return FinancialShiftStatus.pending;
-      default:
-        return FinancialShiftStatus.open;
-    }
-  }
-}
-
-/// Payment method for sales
-enum PaymentMethod {
-  cash,
-  card, // Card/Visa payments
-  wallet,
-  insurance,
-  credit;
-
-  /// Alias for card (backwards compatibility)
-  static PaymentMethod get visa => card;
-}
-
-extension PaymentMethodExtension on PaymentMethod {
-  String get displayName {
-    switch (this) {
-      case PaymentMethod.cash:
-        return 'Cash';
-      case PaymentMethod.card:
-        return 'Visa/Card';
-      case PaymentMethod.wallet:
-        return 'E-Wallet';
-      case PaymentMethod.insurance:
-        return 'Insurance';
-      case PaymentMethod.credit:
-        return 'Credit/Deferred';
-    }
-  }
-  
-  String get value {
-    switch (this) {
-      case PaymentMethod.cash:
-        return 'cash';
-      case PaymentMethod.card:
-        return 'card';
-      case PaymentMethod.wallet:
-        return 'wallet';
-      case PaymentMethod.insurance:
-        return 'insurance';
-      case PaymentMethod.credit:
-        return 'credit';
-    }
-  }
-  
-  static PaymentMethod fromString(String value) {
-    switch (value) {
-      case 'cash':
-        return PaymentMethod.cash;
-      case 'card':
-      case 'visa': // backwards compatibility
-        return PaymentMethod.card;
-      case 'wallet':
-        return PaymentMethod.wallet;
-      case 'insurance':
-        return PaymentMethod.insurance;
-      case 'credit':
-        return PaymentMethod.credit;
-      default:
-        return PaymentMethod.cash;
-    }
-  }
-}
-
-/// Expense category
-enum ExpenseCategory {
-  utilities,
-  shortage,
-  emergency,
-  supplies,
-  maintenance,
-  transport, // Transportation expenses
-  misc;
-
-  /// Alias for transport (backwards compatibility)
-  static ExpenseCategory get transportation => transport;
-}
-
-extension ExpenseCategoryExtension on ExpenseCategory {
-  String get displayName {
-    switch (this) {
-      case ExpenseCategory.utilities:
-        return 'Utilities';
-      case ExpenseCategory.shortage:
-        return 'Shortage/Deficit';
-      case ExpenseCategory.emergency:
-        return 'Emergency';
-      case ExpenseCategory.supplies:
-        return 'Supplies';
-      case ExpenseCategory.maintenance:
-        return 'Maintenance';
-      case ExpenseCategory.transport:
-        return 'Transportation';
-      case ExpenseCategory.misc:
-        return 'Miscellaneous';
-    }
-  }
-  
-  String get value {
-    switch (this) {
-      case ExpenseCategory.utilities:
-        return 'utilities';
-      case ExpenseCategory.shortage:
-        return 'shortage';
-      case ExpenseCategory.emergency:
-        return 'emergency';
-      case ExpenseCategory.supplies:
-        return 'supplies';
-      case ExpenseCategory.maintenance:
-        return 'maintenance';
-      case ExpenseCategory.transport:
-        return 'transport';
-      case ExpenseCategory.misc:
-        return 'misc';
-    }
-  }
-  
-  static ExpenseCategory fromString(String value) {
-    switch (value) {
-      case 'utilities':
-        return ExpenseCategory.utilities;
-      case 'shortage':
-        return ExpenseCategory.shortage;
-      case 'emergency':
-        return ExpenseCategory.emergency;
-      case 'supplies':
-        return ExpenseCategory.supplies;
-      case 'maintenance':
-        return ExpenseCategory.maintenance;
-      case 'transport':
-      case 'transportation': // backwards compatibility
-        return ExpenseCategory.transport;
-      case 'misc':
-        return ExpenseCategory.misc;
-      default:
-        return ExpenseCategory.misc;
-    }
-  }
-}
-
-/// Supplier transaction type
-enum SupplierTransactionType {
-  purchase,
-  payment,
-  refund,
-  adjustment,
-}
-
-extension SupplierTransactionTypeExtension on SupplierTransactionType {
-  String get displayName {
-    switch (this) {
-      case SupplierTransactionType.purchase:
-        return 'Purchase';
-      case SupplierTransactionType.payment:
-        return 'Payment';
-      case SupplierTransactionType.refund:
-        return 'Refund';
-      case SupplierTransactionType.adjustment:
-        return 'Adjustment';
-    }
-  }
-  
-  String get value {
-    switch (this) {
-      case SupplierTransactionType.purchase:
-        return 'purchase';
-      case SupplierTransactionType.payment:
-        return 'payment';
-      case SupplierTransactionType.refund:
-        return 'refund';
-      case SupplierTransactionType.adjustment:
-        return 'adjustment';
-    }
-  }
-  
-  static SupplierTransactionType fromString(String value) {
-    switch (value) {
-      case 'purchase':
-        return SupplierTransactionType.purchase;
-      case 'payment':
-        return SupplierTransactionType.payment;
-      case 'refund':
-        return SupplierTransactionType.refund;
-      case 'adjustment':
-        return SupplierTransactionType.adjustment;
-      default:
-        return SupplierTransactionType.purchase;
-    }
-  }
-  
-  /// Returns true if this transaction increases supplier balance (we owe them)
-  bool get increasesBalance {
-    return this == SupplierTransactionType.purchase;
-  }
-  
-  /// Returns true if this transaction decreases supplier balance (we paid them)
-  bool get decreasesBalance {
-    return this == SupplierTransactionType.payment || 
-           this == SupplierTransactionType.refund;
-  }
-}
+// 
+// NOTE: All financial enums (PaymentMethod, ExpenseCategory, SupplierTransactionType,
+// FinancialShiftStatus) are now defined in:
+//   lib/core/enums/financial_enums.dart
+// 
+// Import from there for all financial enum usage.
