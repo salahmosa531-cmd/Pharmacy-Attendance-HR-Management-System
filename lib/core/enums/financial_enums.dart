@@ -19,6 +19,25 @@ enum PaymentMethod {
 
   /// Alias for card (backwards compatibility)
   static PaymentMethod get visa => card;
+
+  /// Parse from database string with legacy value support
+  static PaymentMethod fromString(String value) {
+    switch (value.toLowerCase()) {
+      case 'cash':
+        return PaymentMethod.cash;
+      case 'card':
+      case 'visa': // Legacy support
+        return PaymentMethod.card;
+      case 'wallet':
+        return PaymentMethod.wallet;
+      case 'insurance':
+        return PaymentMethod.insurance;
+      case 'credit':
+        return PaymentMethod.credit;
+      default:
+        return PaymentMethod.cash;
+    }
+  }
 }
 
 extension PaymentMethodExtension on PaymentMethod {
@@ -53,25 +72,6 @@ extension PaymentMethodExtension on PaymentMethod {
         return 'credit';
     }
   }
-
-  /// Parse from database string with legacy value support
-  static PaymentMethod fromString(String value) {
-    switch (value.toLowerCase()) {
-      case 'cash':
-        return PaymentMethod.cash;
-      case 'card':
-      case 'visa': // Legacy support
-        return PaymentMethod.card;
-      case 'wallet':
-        return PaymentMethod.wallet;
-      case 'insurance':
-        return PaymentMethod.insurance;
-      case 'credit':
-        return PaymentMethod.credit;
-      default:
-        return PaymentMethod.cash;
-    }
-  }
 }
 
 // =============================================================================
@@ -90,6 +90,30 @@ enum ExpenseCategory {
 
   /// Alias for transport (backwards compatibility)
   static ExpenseCategory get transportation => transport;
+
+  /// Parse from database string with legacy value support
+  static ExpenseCategory fromString(String value) {
+    switch (value.toLowerCase()) {
+      case 'utilities':
+        return ExpenseCategory.utilities;
+      case 'shortage':
+        return ExpenseCategory.shortage;
+      case 'emergency':
+        return ExpenseCategory.emergency;
+      case 'supplies':
+        return ExpenseCategory.supplies;
+      case 'maintenance':
+        return ExpenseCategory.maintenance;
+      case 'transport':
+      case 'transportation': // Legacy support
+        return ExpenseCategory.transport;
+      case 'misc':
+      case 'miscellaneous': // Legacy support
+        return ExpenseCategory.misc;
+      default:
+        return ExpenseCategory.misc;
+    }
+  }
 }
 
 extension ExpenseCategoryExtension on ExpenseCategory {
@@ -132,30 +156,6 @@ extension ExpenseCategoryExtension on ExpenseCategory {
         return 'misc';
     }
   }
-
-  /// Parse from database string with legacy value support
-  static ExpenseCategory fromString(String value) {
-    switch (value.toLowerCase()) {
-      case 'utilities':
-        return ExpenseCategory.utilities;
-      case 'shortage':
-        return ExpenseCategory.shortage;
-      case 'emergency':
-        return ExpenseCategory.emergency;
-      case 'supplies':
-        return ExpenseCategory.supplies;
-      case 'maintenance':
-        return ExpenseCategory.maintenance;
-      case 'transport':
-      case 'transportation': // Legacy support
-        return ExpenseCategory.transport;
-      case 'misc':
-      case 'miscellaneous':
-        return ExpenseCategory.misc;
-      default:
-        return ExpenseCategory.misc;
-    }
-  }
 }
 
 // =============================================================================
@@ -168,6 +168,24 @@ enum SupplierTransactionType {
   payment,
   refund,
   adjustment;
+
+  /// Parse from database string with legacy value support
+  static SupplierTransactionType fromString(String value) {
+    switch (value.toLowerCase()) {
+      case 'purchase':
+        return SupplierTransactionType.purchase;
+      case 'payment':
+        return SupplierTransactionType.payment;
+      case 'refund':
+      case 'return': // Legacy support
+      case 'returngoods': // Legacy support
+        return SupplierTransactionType.refund;
+      case 'adjustment':
+        return SupplierTransactionType.adjustment;
+      default:
+        return SupplierTransactionType.purchase;
+    }
+  }
 }
 
 extension SupplierTransactionTypeExtension on SupplierTransactionType {
@@ -204,21 +222,6 @@ extension SupplierTransactionTypeExtension on SupplierTransactionType {
   bool get decreasesBalance =>
       this == SupplierTransactionType.payment ||
       this == SupplierTransactionType.refund;
-
-  static SupplierTransactionType fromString(String value) {
-    switch (value.toLowerCase()) {
-      case 'purchase':
-        return SupplierTransactionType.purchase;
-      case 'payment':
-        return SupplierTransactionType.payment;
-      case 'refund':
-        return SupplierTransactionType.refund;
-      case 'adjustment':
-        return SupplierTransactionType.adjustment;
-      default:
-        return SupplierTransactionType.purchase;
-    }
-  }
 }
 
 // =============================================================================

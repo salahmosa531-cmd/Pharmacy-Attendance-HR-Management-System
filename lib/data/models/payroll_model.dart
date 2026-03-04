@@ -79,7 +79,7 @@ class PayrollRecord extends Equatable {
       otherDeductionsReason: map['other_deductions_reason'] as String?,
       grossSalary: (map['gross_salary'] as num?)?.toDouble() ?? 0,
       netSalary: (map['net_salary'] as num?)?.toDouble() ?? 0,
-      status: PayrollStatusExtension.fromString(map['status'] as String? ?? 'pending'),
+      status: PayrollStatus.fromString(map['status'] as String? ?? 'pending'),
       paidAt: map['paid_at'] != null ? DateTime.parse(map['paid_at'] as String) : null,
       paidBy: map['paid_by'] as String?,
       notes: map['notes'] as String?,
@@ -222,7 +222,22 @@ enum PayrollStatus {
   pending,
   approved,
   paid,
-  cancelled,
+  cancelled;
+
+  static PayrollStatus fromString(String value) {
+    switch (value) {
+      case 'pending':
+        return PayrollStatus.pending;
+      case 'approved':
+        return PayrollStatus.approved;
+      case 'paid':
+        return PayrollStatus.paid;
+      case 'cancelled':
+        return PayrollStatus.cancelled;
+      default:
+        return PayrollStatus.pending;
+    }
+  }
 }
 
 extension PayrollStatusExtension on PayrollStatus {
@@ -249,21 +264,6 @@ extension PayrollStatusExtension on PayrollStatus {
         return 'paid';
       case PayrollStatus.cancelled:
         return 'cancelled';
-    }
-  }
-
-  static PayrollStatus fromString(String value) {
-    switch (value) {
-      case 'pending':
-        return PayrollStatus.pending;
-      case 'approved':
-        return PayrollStatus.approved;
-      case 'paid':
-        return PayrollStatus.paid;
-      case 'cancelled':
-        return PayrollStatus.cancelled;
-      default:
-        return PayrollStatus.pending;
     }
   }
 }
