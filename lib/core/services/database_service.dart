@@ -483,6 +483,8 @@ class DatabaseService {
         opening_cash REAL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'open',
         notes TEXT,
+        scheduled_shift_id TEXT,     
+        scheduled_shift_name TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         synced_at TEXT,
@@ -770,6 +772,10 @@ class DatabaseService {
     // Migration v5 -> v6: Schedule-driven financial shifts
     if (oldVersion < 6) {
       await _migrateToV6(db);
+    }
+        // Migration v6 -> v7
+    if (oldVersion < 7) {
+      await _migrateToV7(db);
     }
     
     // Migration v3 -> v4: Employee-User integrity enhancements
@@ -1101,6 +1107,34 @@ class DatabaseService {
     );
     
     _logMigration('v6 migration completed: Schedule-driven financial shifts');
+  }
+    /// Migration to v7: Fix missing columns in financial_shifts
+  Future<void> _migrateToV7(Database db) async {
+    _logMigration('Starting v7 migration: Ensuring financial_shifts columns exist');
+    
+    // التأكد من إضافة الأعمدة في حال لم يتم إضافتها في v6
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'scheduled_shift_id',
+      columnType: 'TEXT',
+    );
+    
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'scheduled_shift_name',
+      columnType: 'TEXT',
+    );
+
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'opened_by_employee_name',
+      columnType: 'TEXT',
+    );
+    
+    _logMigration('v7 migration completed');
   }
   
   /// Migration for Employee-User integrity
