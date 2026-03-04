@@ -7,7 +7,7 @@ class AppConstants {
   
   // Database
   static const String databaseName = 'pharmacy_attendance.db';
-  static const int databaseVersion = 7; // v7: Schedule-driven financial shifts
+  static const int databaseVersion = 8; // v8: Schedule-driven financial shifts
   
   // Subscription/Trial
   static const int trialPeriodDays = 30;
