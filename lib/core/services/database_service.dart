@@ -479,6 +479,7 @@ class DatabaseService {
         shift_id TEXT,
         employee_id TEXT NOT NULL,
         opened_at TEXT NOT NULL,
+        opend_by_employee_name TEXT,
         closed_at TEXT,
         opening_cash REAL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'open',
@@ -778,6 +779,11 @@ class DatabaseService {
       await _migrateToV7(db);
     }
     
+            // Migration v7 -> v8
+    if (oldVersion < 7) {
+      await _migrateToV8(db);
+    }
+
     // Migration v3 -> v4: Employee-User integrity enhancements
     // This migration runs for all databases to ensure:
     // 1. Users without employees get employees provisioned
@@ -1136,7 +1142,22 @@ class DatabaseService {
     
     _logMigration('v7 migration completed');
   }
-  
+     /// 888
+    /// Migration to v8: Fix missing columns in financial_shifts
+  Future<void> _migrateToV8(Database db) async {
+    _logMigration('Starting v8 migration: Ensuring financial_shifts columns exist');
+    
+    // التأكد من إضافة الأعمدة في حال لم يتم إضافتها في v6
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'opened_by_employee_name',
+      columnType: 'TEXT',
+    );
+    
+    _logMigration('v8 migration completed');
+  }
+
   /// Migration for Employee-User integrity
   /// 
   /// SINGLE-BRANCH ARCHITECTURE: Ensures all users have employee records
