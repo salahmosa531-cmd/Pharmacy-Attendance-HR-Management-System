@@ -53,7 +53,20 @@ class AppConstants {
 enum SalaryType {
   monthly,
   hourly,
-  perShift,
+  perShift;
+
+  static SalaryType fromString(String value) {
+    switch (value) {
+      case 'monthly':
+        return SalaryType.monthly;
+      case 'hourly':
+        return SalaryType.hourly;
+      case 'per_shift':
+        return SalaryType.perShift;
+      default:
+        return SalaryType.monthly;
+    }
+  }
 }
 
 extension SalaryTypeExtension on SalaryType {
@@ -78,19 +91,6 @@ extension SalaryTypeExtension on SalaryType {
         return 'per_shift';
     }
   }
-  
-  static SalaryType fromString(String value) {
-    switch (value) {
-      case 'monthly':
-        return SalaryType.monthly;
-      case 'hourly':
-        return SalaryType.hourly;
-      case 'per_shift':
-        return SalaryType.perShift;
-      default:
-        return SalaryType.monthly;
-    }
-  }
 }
 
 /// Employee status enum
@@ -98,7 +98,22 @@ enum EmployeeStatus {
   active,
   inactive,
   suspended,
-  terminated,
+  terminated;
+
+  static EmployeeStatus fromString(String value) {
+    switch (value) {
+      case 'active':
+        return EmployeeStatus.active;
+      case 'inactive':
+        return EmployeeStatus.inactive;
+      case 'suspended':
+        return EmployeeStatus.suspended;
+      case 'terminated':
+        return EmployeeStatus.terminated;
+      default:
+        return EmployeeStatus.active;
+    }
+  }
 }
 
 extension EmployeeStatusExtension on EmployeeStatus {
@@ -127,21 +142,6 @@ extension EmployeeStatusExtension on EmployeeStatus {
         return 'terminated';
     }
   }
-  
-  static EmployeeStatus fromString(String value) {
-    switch (value) {
-      case 'active':
-        return EmployeeStatus.active;
-      case 'inactive':
-        return EmployeeStatus.inactive;
-      case 'suspended':
-        return EmployeeStatus.suspended;
-      case 'terminated':
-        return EmployeeStatus.terminated;
-      default:
-        return EmployeeStatus.active;
-    }
-  }
 }
 
 /// Attendance status enum
@@ -152,7 +152,28 @@ enum AttendanceStatus {
   earlyLeave,
   halfDay,
   onLeave,
-  holiday,
+  holiday;
+
+  static AttendanceStatus fromString(String value) {
+    switch (value) {
+      case 'present':
+        return AttendanceStatus.present;
+      case 'absent':
+        return AttendanceStatus.absent;
+      case 'late':
+        return AttendanceStatus.late;
+      case 'early_leave':
+        return AttendanceStatus.earlyLeave;
+      case 'half_day':
+        return AttendanceStatus.halfDay;
+      case 'on_leave':
+        return AttendanceStatus.onLeave;
+      case 'holiday':
+        return AttendanceStatus.holiday;
+      default:
+        return AttendanceStatus.present;
+    }
+  }
 }
 
 extension AttendanceStatusExtension on AttendanceStatus {
@@ -193,27 +214,6 @@ extension AttendanceStatusExtension on AttendanceStatus {
         return 'holiday';
     }
   }
-  
-  static AttendanceStatus fromString(String value) {
-    switch (value) {
-      case 'present':
-        return AttendanceStatus.present;
-      case 'absent':
-        return AttendanceStatus.absent;
-      case 'late':
-        return AttendanceStatus.late;
-      case 'early_leave':
-        return AttendanceStatus.earlyLeave;
-      case 'half_day':
-        return AttendanceStatus.halfDay;
-      case 'on_leave':
-        return AttendanceStatus.onLeave;
-      case 'holiday':
-        return AttendanceStatus.holiday;
-      default:
-        return AttendanceStatus.present;
-    }
-  }
 }
 
 /// User role enum
@@ -221,7 +221,22 @@ enum UserRole {
   superAdmin,
   admin,
   manager,
-  employee,
+  employee;
+
+  static UserRole fromString(String value) {
+    switch (value) {
+      case 'super_admin':
+        return UserRole.superAdmin;
+      case 'admin':
+        return UserRole.admin;
+      case 'manager':
+        return UserRole.manager;
+      case 'employee':
+        return UserRole.employee;
+      default:
+        return UserRole.employee;
+    }
+  }
 }
 
 extension UserRoleExtension on UserRole {
@@ -248,21 +263,6 @@ extension UserRoleExtension on UserRole {
         return 'manager';
       case UserRole.employee:
         return 'employee';
-    }
-  }
-  
-  static UserRole fromString(String value) {
-    switch (value) {
-      case 'super_admin':
-        return UserRole.superAdmin;
-      case 'admin':
-        return UserRole.admin;
-      case 'manager':
-        return UserRole.manager;
-      case 'employee':
-        return UserRole.employee;
-      default:
-        return UserRole.employee;
     }
   }
   
@@ -298,7 +298,26 @@ enum AttendanceMethod {
   qrCode,
   fingerprint,
   nfc,
-  faceRecognition,
+  faceRecognition;
+
+  static AttendanceMethod fromString(String value) {
+    switch (value) {
+      case 'manual':
+        return AttendanceMethod.manual;
+      case 'barcode':
+        return AttendanceMethod.barcode;
+      case 'qr_code':
+        return AttendanceMethod.qrCode;
+      case 'fingerprint':
+        return AttendanceMethod.fingerprint;
+      case 'nfc':
+        return AttendanceMethod.nfc;
+      case 'face_recognition':
+        return AttendanceMethod.faceRecognition;
+      default:
+        return AttendanceMethod.manual;
+    }
+  }
 }
 
 extension AttendanceMethodExtension on AttendanceMethod {
@@ -335,32 +354,26 @@ extension AttendanceMethodExtension on AttendanceMethod {
         return 'face_recognition';
     }
   }
-  
-  static AttendanceMethod fromString(String value) {
-    switch (value) {
-      case 'manual':
-        return AttendanceMethod.manual;
-      case 'barcode':
-        return AttendanceMethod.barcode;
-      case 'qr_code':
-        return AttendanceMethod.qrCode;
-      case 'fingerprint':
-        return AttendanceMethod.fingerprint;
-      case 'nfc':
-        return AttendanceMethod.nfc;
-      case 'face_recognition':
-        return AttendanceMethod.faceRecognition;
-      default:
-        return AttendanceMethod.manual;
-    }
-  }
 }
 
 /// License type enum
 enum LicenseType {
   trial,
   lifetime,
-  subscription,
+  subscription;
+
+  static LicenseType fromString(String value) {
+    switch (value) {
+      case 'trial':
+        return LicenseType.trial;
+      case 'lifetime':
+        return LicenseType.lifetime;
+      case 'subscription':
+        return LicenseType.subscription;
+      default:
+        return LicenseType.trial;
+    }
+  }
 }
 
 extension LicenseTypeExtension on LicenseType {
@@ -383,19 +396,6 @@ extension LicenseTypeExtension on LicenseType {
         return 'lifetime';
       case LicenseType.subscription:
         return 'subscription';
-    }
-  }
-  
-  static LicenseType fromString(String value) {
-    switch (value) {
-      case 'trial':
-        return LicenseType.trial;
-      case 'lifetime':
-        return LicenseType.lifetime;
-      case 'subscription':
-        return LicenseType.subscription;
-      default:
-        return LicenseType.trial;
     }
   }
 }
