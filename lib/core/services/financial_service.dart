@@ -512,10 +512,15 @@ class FinancialService {
     );
     
     // Sum only payment transactions (cash-out to suppliers)
-    return payments
-        .where((tx) => tx.transactionType == SupplierTransactionType.payment)
-        .fold(0.0, (sum, tx) => sum + tx.amount);
-}
+    // Using explicit loop to ensure type safety (avoids FutureOr<double> inference issues)
+    double total = 0.0;
+    for (final tx in payments) {
+      if (tx.transactionType == SupplierTransactionType.payment) {
+        total += tx.amount;
+      }
+    }
+    return total;
+  }
   
   /// Get debt collection payments received during a shift period (cash-in component)
   /// 
