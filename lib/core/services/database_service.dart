@@ -479,7 +479,7 @@ class DatabaseService {
         shift_id TEXT,
         employee_id TEXT NOT NULL,
         opened_at TEXT NOT NULL,
-        opend_by_employee_name TEXT,
+        opened_by_employee_name TEXT,
         closed_at TEXT,
         opening_cash REAL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'open',
@@ -779,9 +779,14 @@ class DatabaseService {
       await _migrateToV7(db);
     }
     
-            // Migration v7 -> v8
-    if (oldVersion < 7) {
+    // Migration v7 -> v8
+    if (oldVersion < 8) {
       await _migrateToV8(db);
+    }
+    
+    // Migration v8 -> v9: Fix column name typo
+    if (oldVersion < 9) {
+      await _migrateToV9(db);
     }
 
     // Migration v3 -> v4: Employee-User integrity enhancements
@@ -1142,8 +1147,8 @@ class DatabaseService {
     
     _logMigration('v7 migration completed');
   }
-     /// 888
-    /// Migration to v8: Fix missing columns in financial_shifts
+
+  /// Migration to v8: Ensure opened_by_employee_name column exists
   Future<void> _migrateToV8(Database db) async {
     _logMigration('Starting v8 migration: Ensuring financial_shifts columns exist');
     
@@ -1156,6 +1161,61 @@ class DatabaseService {
     );
     
     _logMigration('v8 migration completed');
+  }
+
+  /// Migration to v9: Fix column name typo (opend_by_employee_name -> opened_by_employee_name)
+  /// 
+  /// This migration handles databases that were created with the typo in _onCreate
+  /// and ensures all databases have the correct column name.
+  Future<void> _migrateToV9(Database db) async {
+    _logMigration('Starting v9 migration: Fix column name typo in financial_shifts');
+    
+    // Check if the typo column exists
+    final tableInfo = await db.rawQuery('PRAGMA table_info(financial_shifts)');
+    final hasTypoColumn = tableInfo.any(
+      (col) => col['name']?.toString() == 'opend_by_employee_name',
+    );
+    final hasCorrectColumn = tableInfo.any(
+      (col) => col['name']?.toString() == 'opened_by_employee_name',
+    );
+    
+    if (hasTypoColumn && !hasCorrectColumn) {
+      // Database was created with typo - need to create new column and migrate data
+      _logMigration('Found typo column "opend_by_employee_name", migrating to "opened_by_employee_name"');
+      
+      // Add the correct column
+      await _safeAddColumn(
+        db,
+        tableName: 'financial_shifts',
+        columnName: 'opened_by_employee_name',
+        columnType: 'TEXT',
+      );
+      
+      // Copy data from typo column to correct column
+      await db.execute('''
+        UPDATE financial_shifts 
+        SET opened_by_employee_name = opend_by_employee_name 
+        WHERE opend_by_employee_name IS NOT NULL
+      ''');
+      
+      _logMigration('Migrated data from typo column to correct column');
+      
+      // Note: SQLite doesn't support DROP COLUMN in older versions
+      // The typo column will remain but unused - this is safe
+    } else if (!hasCorrectColumn) {
+      // Neither column exists - add the correct one
+      _logMigration('Adding missing "opened_by_employee_name" column');
+      await _safeAddColumn(
+        db,
+        tableName: 'financial_shifts',
+        columnName: 'opened_by_employee_name',
+        columnType: 'TEXT',
+      );
+    } else {
+      _logMigration('Column "opened_by_employee_name" already exists correctly');
+    }
+    
+    _logMigration('v9 migration completed');
   }
 
   /// Migration for Employee-User integrity
