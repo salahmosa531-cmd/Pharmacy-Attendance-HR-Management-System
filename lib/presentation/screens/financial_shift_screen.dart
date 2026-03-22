@@ -279,9 +279,13 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
     );
   }
 
+  /// Open a new financial shift
+  /// 
+  /// DRAWER STARTS AT ZERO - No opening cash prompt
+  /// The drawer balance starts at 0 and accumulates from cash sales and collections
   Future<void> _openShift() async {
-    final openingCash = await _showOpeningCashDialog();
-    if (openingCash == null) return;
+    // Drawer starts at ZERO - no opening cash dialog needed
+    const double openingCash = 0.0;
     
     setState(() => _isLoading = true);
     
@@ -299,6 +303,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       
       _currentShift = await _financialService.openShift(
         employeeId: _resolvedEmployee!.id,
+        employeeName: _resolvedEmployee!.fullName,
         openingCash: openingCash,
       );
       
@@ -310,7 +315,7 @@ class _FinancialShiftScreenState extends State<FinancialShiftScreen> with Single
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Shift opened successfully'), backgroundColor: Colors.green),
+          const SnackBar(content: Text('Shift opened successfully (Drawer: 0 EGP)'), backgroundColor: Colors.green),
         );
       }
     } catch (e) {

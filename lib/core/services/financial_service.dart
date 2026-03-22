@@ -486,9 +486,12 @@ class FinancialService {
     final totalCashSales = salesByMethod[PaymentMethod.cash] ?? 0;
     final expensesByCategory = await getExpensesBreakdown(financialShiftId);
     final totalExpenses = expensesByCategory.values.fold(0.0, (sum, v) => sum + v);
+    final totalCollections = await getTotalCollectionsForShift(financialShiftId);
     final salesCount = await _shiftSaleRepo.getSalesCountForShift(financialShiftId);
     final expenseCount = await _shiftExpenseRepo.getExpenseCountForShift(financialShiftId);
-    final expectedCash = shift.openingCash + totalCashSales - totalExpenses;
+    
+    // Expected = opening + cash_sales + collections - expenses
+    final expectedCash = shift.openingCash + totalCashSales + totalCollections - totalExpenses;
 
     return ShiftSummary(
       financialShift: shift,
@@ -498,6 +501,7 @@ class FinancialService {
       totalExpenses: totalExpenses,
       expenseCount: expenseCount,
       expensesByCategory: expensesByCategory,
+      totalCollections: totalCollections,
       expectedCash: expectedCash,
     );
   }
@@ -736,6 +740,7 @@ class ShiftSummary {
   final double totalExpenses;
   final int expenseCount;
   final Map<ExpenseCategory, double> expensesByCategory;
+  final double totalCollections;  // تحصيلات
   final double expectedCash;
 
   ShiftSummary({
@@ -746,6 +751,7 @@ class ShiftSummary {
     required this.totalExpenses,
     required this.expenseCount,
     required this.expensesByCategory,
+    this.totalCollections = 0,
     required this.expectedCash,
   });
 
@@ -760,6 +766,9 @@ class ShiftSummary {
 
   /// Wallet sales only
   double get walletSales => salesByMethod[PaymentMethod.wallet] ?? 0;
+  
+  /// Whether shift has collections
+  bool get hasCollections => totalCollections > 0;
 }
 
 /// Comprehensive cash flow summary for a shift
