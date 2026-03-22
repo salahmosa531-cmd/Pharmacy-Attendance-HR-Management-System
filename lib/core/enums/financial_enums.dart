@@ -246,3 +246,86 @@ enum FinancialShiftStatus {
     );
   }
 }
+
+// =============================================================================
+// COLLECTION TYPE ENUM
+// =============================================================================
+
+/// Types of collections (تحصيلات) received during a shift
+/// These represent money coming IN from debtors/customers
+enum CollectionType {
+  creditSale,      // تحصيل آجل - Collection from credit sale
+  insurance,       // تحصيل تأمين - Insurance reimbursement
+  installment,     // تحصيل قسط - Installment payment
+  refundReturn,    // استرداد مرتجع - Refund from supplier return
+  other;           // أخرى - Other collection
+
+  /// Parse from database string
+  static CollectionType fromString(String value) {
+    switch (value.toLowerCase()) {
+      case 'creditsale':
+      case 'credit_sale':
+        return CollectionType.creditSale;
+      case 'insurance':
+        return CollectionType.insurance;
+      case 'installment':
+        return CollectionType.installment;
+      case 'refundreturn':
+      case 'refund_return':
+        return CollectionType.refundReturn;
+      case 'other':
+      default:
+        return CollectionType.other;
+    }
+  }
+}
+
+extension CollectionTypeExtension on CollectionType {
+  /// Human-readable display name for UI
+  String get displayName {
+    switch (this) {
+      case CollectionType.creditSale:
+        return 'Credit Sale Collection';
+      case CollectionType.insurance:
+        return 'Insurance Reimbursement';
+      case CollectionType.installment:
+        return 'Installment Payment';
+      case CollectionType.refundReturn:
+        return 'Supplier Refund';
+      case CollectionType.other:
+        return 'Other';
+    }
+  }
+
+  /// Arabic display name
+  String get displayNameAr {
+    switch (this) {
+      case CollectionType.creditSale:
+        return 'تحصيل آجل';
+      case CollectionType.insurance:
+        return 'تحصيل تأمين';
+      case CollectionType.installment:
+        return 'تحصيل قسط';
+      case CollectionType.refundReturn:
+        return 'استرداد مرتجع';
+      case CollectionType.other:
+        return 'أخرى';
+    }
+  }
+
+  /// Database storage value
+  String get value {
+    switch (this) {
+      case CollectionType.creditSale:
+        return 'credit_sale';
+      case CollectionType.insurance:
+        return 'insurance';
+      case CollectionType.installment:
+        return 'installment';
+      case CollectionType.refundReturn:
+        return 'refund_return';
+      case CollectionType.other:
+        return 'other';
+    }
+  }
+}

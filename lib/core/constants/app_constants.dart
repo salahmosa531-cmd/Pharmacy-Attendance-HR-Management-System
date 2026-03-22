@@ -7,7 +7,7 @@ class AppConstants {
   
   // Database
   static const String databaseName = 'pharmacy_attendance.db';
-  static const int databaseVersion = 9; // v9: Fix column name typo in financial_shifts
+  static const int databaseVersion = 10; // v10: Add shift_collections table for collections (تحصيلات)
   
   // Subscription/Trial
   static const int trialPeriodDays = 30;

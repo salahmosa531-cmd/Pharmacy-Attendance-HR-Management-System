@@ -22,6 +22,9 @@ class ShiftClosure extends Equatable {
   final double totalInsuranceSales;
   final double totalCreditSales;
   
+  // Collections (تحصيلات)
+  final double totalCollections;
+  
   // Expenses and cash reconciliation
   final double totalExpenses;
   final double expectedCash;
@@ -53,6 +56,7 @@ class ShiftClosure extends Equatable {
     this.totalWalletSales = 0,
     this.totalInsuranceSales = 0,
     this.totalCreditSales = 0,
+    this.totalCollections = 0,
     this.totalExpenses = 0,
     this.expectedCash = 0,
     required this.actualCash,
@@ -81,6 +85,7 @@ class ShiftClosure extends Equatable {
       totalWalletSales: (map['total_wallet_sales'] as num?)?.toDouble() ?? 0,
       totalInsuranceSales: (map['total_insurance_sales'] as num?)?.toDouble() ?? 0,
       totalCreditSales: (map['total_credit_sales'] as num?)?.toDouble() ?? 0,
+      totalCollections: (map['total_collections'] as num?)?.toDouble() ?? 0,
       totalExpenses: (map['total_expenses'] as num?)?.toDouble() ?? 0,
       expectedCash: (map['expected_cash'] as num?)?.toDouble() ?? 0,
       actualCash: (map['actual_cash'] as num?)?.toDouble() ?? 0,
@@ -112,6 +117,7 @@ class ShiftClosure extends Equatable {
       'total_wallet_sales': totalWalletSales,
       'total_insurance_sales': totalInsuranceSales,
       'total_credit_sales': totalCreditSales,
+      'total_collections': totalCollections,
       'total_expenses': totalExpenses,
       'expected_cash': expectedCash,
       'actual_cash': actualCash,
@@ -140,6 +146,7 @@ class ShiftClosure extends Equatable {
     double? totalWalletSales,
     double? totalInsuranceSales,
     double? totalCreditSales,
+    double? totalCollections,
     double? totalExpenses,
     double? expectedCash,
     double? actualCash,
@@ -165,6 +172,7 @@ class ShiftClosure extends Equatable {
       totalWalletSales: totalWalletSales ?? this.totalWalletSales,
       totalInsuranceSales: totalInsuranceSales ?? this.totalInsuranceSales,
       totalCreditSales: totalCreditSales ?? this.totalCreditSales,
+      totalCollections: totalCollections ?? this.totalCollections,
       totalExpenses: totalExpenses ?? this.totalExpenses,
       expectedCash: expectedCash ?? this.expectedCash,
       actualCash: actualCash ?? this.actualCash,
@@ -182,14 +190,15 @@ class ShiftClosure extends Equatable {
     );
   }
 
-  /// Calculate expected cash based on opening cash + cash sales - expenses
+  /// Calculate expected cash based on opening cash + cash sales + collections - expenses
   /// Note: Opening cash is 0 in Drawer model (drawer starts empty each shift)
   static double calculateExpectedCash({
     required double openingCash,
     required double cashSales,
+    required double collections,
     required double expenses,
   }) {
-    return openingCash + cashSales - expenses;
+    return openingCash + cashSales + collections - expenses;
   }
 
   /// Check if there's a shortage (negative difference)
@@ -218,7 +227,7 @@ class ShiftClosure extends Equatable {
   List<Object?> get props => [
     id, financialShiftId, branchId, totalSales, totalCashSales,
     totalCardSales, totalWalletSales, totalInsuranceSales, totalCreditSales,
-    totalExpenses, expectedCash, actualCash, difference, differenceReason,
+    totalCollections, totalExpenses, expectedCash, actualCash, difference, differenceReason,
     safeBalanceBefore, safeBalanceAfter, transferredToSafe, safePayments,
     closedBy, verifiedBy, notes, createdAt, syncedAt,
   ];

@@ -4,11 +4,13 @@ import '../../data/models/financial_shift_model.dart';
 import '../../data/models/shift_sale_model.dart';
 import '../../data/models/shift_expense_model.dart';
 import '../../data/models/shift_closure_model.dart';
+import '../../data/models/shift_collection_model.dart';
 import '../../data/models/safe_balance_model.dart';
 import '../../data/repositories/financial_shift_repository.dart';
 import '../../data/repositories/shift_sale_repository.dart';
 import '../../data/repositories/shift_expense_repository.dart';
 import '../../data/repositories/shift_closure_repository.dart';
+import '../../data/repositories/shift_collection_repository.dart';
 import '../../data/repositories/supplier_transaction_repository.dart';
 import '../../data/models/supplier_transaction_model.dart';
 import 'logging_service.dart';
@@ -38,6 +40,7 @@ class FinancialService {
   final _shiftSaleRepo = ShiftSaleRepository.instance;
   final _shiftExpenseRepo = ShiftExpenseRepository.instance;
   final _shiftClosureRepo = ShiftClosureRepository.instance;
+  final _shiftCollectionRepo = ShiftCollectionRepository.instance;
   final _supplierTransactionRepo = SupplierTransactionRepository.instance;
   final _employeeResolver = EmployeeResolverService.instance;
   final _safeService = SafeService.instance;
@@ -268,6 +271,78 @@ class FinancialService {
   }
 
   // =========================================================================
+  // COLLECTION OPERATIONS (تحصيلات)
+  // =========================================================================
+
+  /// Record a collection (تحصيل)
+  /// 
+  /// Collections are cash-in transactions from:
+  /// - Credit sale payments (آجل)
+  /// - Insurance reimbursements (تأمين)
+  /// - Installment payments (أقساط)
+  /// - Supplier refunds (مرتجعات)
+  Future<ShiftCollection> recordCollection({
+    required String financialShiftId,
+    required double amount,
+    CollectionType collectionType = CollectionType.creditSale,
+    String? customerName,
+    String? referenceNumber,
+    String? description,
+    String? recordedBy,
+  }) async {
+    // Verify shift is open
+    final shift = await _financialShiftRepo.getById(financialShiftId);
+    if (shift == null) {
+      throw FinancialException(
+        'Financial shift not found',
+        code: 'SHIFT_NOT_FOUND',
+      );
+    }
+    if (!shift.isOpen) {
+      throw FinancialException(
+        'Cannot record collection on closed shift',
+        code: 'SHIFT_CLOSED',
+      );
+    }
+
+    final collection = ShiftCollection(
+      id: _uuid.v4(),
+      financialShiftId: financialShiftId,
+      branchId: '1', // SINGLE-BRANCH: Hardcoded
+      amount: amount,
+      collectionType: collectionType,
+      customerName: customerName,
+      referenceNumber: referenceNumber,
+      description: description,
+      recordedBy: recordedBy,
+      createdAt: DateTime.now(),
+    );
+
+    await _shiftCollectionRepo.insert(collection);
+    LoggingService.instance.info(
+      'FinancialService',
+      'Recorded collection: ${collection.id}, amount: $amount, type: ${collectionType.value}',
+    );
+
+    return collection;
+  }
+
+  /// Get collections for a financial shift
+  Future<List<ShiftCollection>> getCollectionsForShift(String financialShiftId) async {
+    return _shiftCollectionRepo.getByFinancialShift(financialShiftId);
+  }
+
+  /// Get total collections for a shift
+  Future<double> getTotalCollectionsForShift(String financialShiftId) async {
+    return _shiftCollectionRepo.getTotalCollectionsForShift(financialShiftId);
+  }
+
+  /// Get collections breakdown by type
+  Future<Map<CollectionType, double>> getCollectionsBreakdown(String financialShiftId) async {
+    return _shiftCollectionRepo.getCollectionsByType(financialShiftId);
+  }
+
+  // =========================================================================
   // SHIFT CLOSING OPERATIONS
   // =========================================================================
 
@@ -313,11 +388,12 @@ class FinancialService {
     final totalWalletSales = salesByMethod[PaymentMethod.wallet] ?? 0;
     final totalInsuranceSales = salesByMethod[PaymentMethod.insurance] ?? 0;
     final totalCreditSales = salesByMethod[PaymentMethod.credit] ?? 0;
+    final totalCollections = await getTotalCollectionsForShift(financialShiftId);
     final totalExpenses = await getTotalExpensesForShift(financialShiftId);
 
-    // Calculate expected cash (Drawer model: starts at 0 + opening cash for change)
-    // opening_cash is the initial change float put in drawer at shift start
-    final expectedCash = shift.openingCash + totalCashSales - totalExpenses;
+    // Calculate expected cash (Drawer model: starts at 0)
+    // Expected = opening_cash + cash_sales + collections - expenses
+    final expectedCash = shift.openingCash + totalCashSales + totalCollections - totalExpenses;
     final difference = actualCash - expectedCash;
 
     // Require reason if there's a difference
@@ -365,6 +441,7 @@ class FinancialService {
       totalWalletSales: totalWalletSales,
       totalInsuranceSales: totalInsuranceSales,
       totalCreditSales: totalCreditSales,
+      totalCollections: totalCollections,
       totalExpenses: totalExpenses,
       expectedCash: expectedCash,
       actualCash: actualCash,
@@ -522,26 +599,21 @@ class FinancialService {
     return total;
   }
   
-  /// Get debt collection payments received during a shift period (cash-in component)
+  /// Get collections (تحصيلات) received during a shift (cash-in component)
   /// 
-  /// Returns credit sales payments received from customers during the shift period.
-  /// In pharmacy context, this could be insurance reimbursements or credit account payments.
-  /// 
-  /// Note: Currently returns 0 as credit collection is not implemented.
-  /// This is a placeholder for future integration.
-  Future<double> getShiftDebtPaymentsReceived(String financialShiftId) async {
-    // TODO: Implement when credit/debt collection feature is added
-    // This would track:
-    // - Insurance reimbursements received
-    // - Credit account payments from customers
-    // - Instalment payments received
-    return 0;
+  /// Returns total collections from all sources:
+  /// - Credit sale payments (آجل)
+  /// - Insurance reimbursements (تأمين)
+  /// - Installment payments (أقساط)
+  /// - Supplier refunds (مرتجعات)
+  Future<double> getShiftCollections(String financialShiftId) async {
+    return _shiftCollectionRepo.getTotalCollectionsForShift(financialShiftId);
   }
   
   /// Get comprehensive shift cash flow summary
   /// 
   /// Returns a breakdown of all cash movements during the shift:
-  /// - Cash In: Opening cash + Cash sales + Debt payments received
+  /// - Cash In: Opening cash + Cash sales + Collections (تحصيلات)
   /// - Cash Out: Expenses + Purchase payments to suppliers
   /// - Expected Cash: Cash In - Cash Out
   Future<ShiftCashFlowSummary> getShiftCashFlowSummary(String financialShiftId) async {
@@ -556,14 +628,14 @@ class FinancialService {
     // Cash In components
     final openingCash = shift.openingCash;
     final cashSales = await getShiftSalesCash(financialShiftId);
-    final debtPaymentsReceived = await getShiftDebtPaymentsReceived(financialShiftId);
+    final collections = await getShiftCollections(financialShiftId);
     
     // Cash Out components
     final expenses = await getShiftExpenses(financialShiftId);
     final purchasePayments = await getShiftPurchasePayments(financialShiftId);
     
     // Calculate totals
-    final totalCashIn = openingCash + cashSales + debtPaymentsReceived;
+    final totalCashIn = openingCash + cashSales + collections;
     final totalCashOut = expenses + purchasePayments;
     final expectedCash = totalCashIn - totalCashOut;
     
@@ -571,7 +643,7 @@ class FinancialService {
       financialShiftId: financialShiftId,
       openingCash: openingCash,
       cashSales: cashSales,
-      debtPaymentsReceived: debtPaymentsReceived,
+      collections: collections,
       totalCashIn: totalCashIn,
       expenses: expenses,
       purchasePayments: purchasePayments,
@@ -693,7 +765,7 @@ class ShiftSummary {
 /// Comprehensive cash flow summary for a shift
 /// 
 /// Breaks down all cash movements:
-/// - Cash In: Opening cash + Cash sales + Debt payments received
+/// - Cash In: Opening cash + Cash sales + Collections (تحصيلات)
 /// - Cash Out: Expenses + Purchase payments to suppliers
 /// - Expected Cash: Cash In - Cash Out
 class ShiftCashFlowSummary {
@@ -702,7 +774,7 @@ class ShiftCashFlowSummary {
   // Cash In components
   final double openingCash;
   final double cashSales;
-  final double debtPaymentsReceived;
+  final double collections;  // تحصيلات
   final double totalCashIn;
   
   // Cash Out components
@@ -717,7 +789,7 @@ class ShiftCashFlowSummary {
     required this.financialShiftId,
     required this.openingCash,
     required this.cashSales,
-    required this.debtPaymentsReceived,
+    required this.collections,
     required this.totalCashIn,
     required this.expenses,
     required this.purchasePayments,
@@ -731,8 +803,8 @@ class ShiftCashFlowSummary {
   /// Whether the shift has any purchase payments
   bool get hasPurchasePayments => purchasePayments > 0;
   
-  /// Whether the shift has any debt payments received
-  bool get hasDebtPaymentsReceived => debtPaymentsReceived > 0;
+  /// Whether the shift has any collections
+  bool get hasCollections => collections > 0;
 }
 
 /// Exception for financial operations
