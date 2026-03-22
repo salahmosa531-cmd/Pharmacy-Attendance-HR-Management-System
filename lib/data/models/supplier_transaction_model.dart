@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import '../../core/enums/financial_enums.dart';
 
 /// Represents a transaction with a supplier (purchase or payment)
 /// 
@@ -152,23 +153,5 @@ class SupplierTransaction extends Equatable {
   ];
 }
 
-/// Transaction type enum
-enum SupplierTransactionType {
-  purchase('purchase', 'Purchase', 'Purchase from supplier'),
-  payment('payment', 'Payment', 'Payment to supplier'),
-  returnGoods('return', 'Return', 'Return goods to supplier'),
-  adjustment('adjustment', 'Adjustment', 'Balance adjustment');
-
-  final String value;
-  final String displayName;
-  final String description;
-
-  const SupplierTransactionType(this.value, this.displayName, this.description);
-
-  static SupplierTransactionType fromString(String value) {
-    return SupplierTransactionType.values.firstWhere(
-      (t) => t.value == value,
-      orElse: () => SupplierTransactionType.purchase,
-    );
-  }
-}
+// Note: SupplierTransactionType enum is defined in core/enums/financial_enums.dart
+// Do not duplicate here - import from the canonical source

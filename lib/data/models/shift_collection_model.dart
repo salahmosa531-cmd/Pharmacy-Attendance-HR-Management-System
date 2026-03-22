@@ -1,49 +1,57 @@
 import 'package:equatable/equatable.dart';
 import '../../core/enums/financial_enums.dart';
 
-/// Represents an expense during a financial shift
+/// Represents a collection (تحصيل) received during a financial shift
 /// 
-/// Records expenses with category classification for tracking
-/// utilities, shortages, purchases, and other operational costs.
-class ShiftExpense extends Equatable {
+/// Collections are cash-in transactions representing money received from:
+/// - Credit sale payments (آجل)
+/// - Insurance reimbursements (تأمين)
+/// - Installment payments (أقساط)
+/// - Supplier refunds (مرتجعات)
+/// - Other sources
+/// 
+/// These are added to the shift's cash total (similar to sales).
+class ShiftCollection extends Equatable {
   final String id;
   final String financialShiftId;
   final String branchId;
   final double amount;
-  final ExpenseCategory category;
-  final String description;
-  final String? receiptNumber;
+  final CollectionType collectionType;
+  final String? customerName;      // اسم العميل
+  final String? referenceNumber;   // رقم مرجعي (فاتورة أصلية / رقم تأمين)
+  final String? description;
   final String? recordedBy;
-  final String? approvedBy;
   final DateTime createdAt;
   final DateTime? syncedAt;
 
-  const ShiftExpense({
+  const ShiftCollection({
     required this.id,
     required this.financialShiftId,
     required this.branchId,
     required this.amount,
-    this.category = ExpenseCategory.misc,
-    required this.description,
-    this.receiptNumber,
+    this.collectionType = CollectionType.creditSale,
+    this.customerName,
+    this.referenceNumber,
+    this.description,
     this.recordedBy,
-    this.approvedBy,
     required this.createdAt,
     this.syncedAt,
   });
 
   /// Create from database map
-  factory ShiftExpense.fromMap(Map<String, dynamic> map) {
-    return ShiftExpense(
+  factory ShiftCollection.fromMap(Map<String, dynamic> map) {
+    return ShiftCollection(
       id: map['id'] as String,
       financialShiftId: map['financial_shift_id'] as String,
       branchId: map['branch_id'] as String,
       amount: (map['amount'] as num?)?.toDouble() ?? 0,
-      category: ExpenseCategory.fromString(map['category'] as String? ?? 'misc'),
-      description: map['description'] as String? ?? '',
-      receiptNumber: map['receipt_number'] as String?,
+      collectionType: CollectionType.fromString(
+        map['collection_type'] as String? ?? 'credit_sale',
+      ),
+      customerName: map['customer_name'] as String?,
+      referenceNumber: map['reference_number'] as String?,
+      description: map['description'] as String?,
       recordedBy: map['recorded_by'] as String?,
-      approvedBy: map['approved_by'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
       syncedAt: map['synced_at'] != null 
           ? DateTime.parse(map['synced_at'] as String)
@@ -58,40 +66,40 @@ class ShiftExpense extends Equatable {
       'financial_shift_id': financialShiftId,
       'branch_id': branchId,
       'amount': amount,
-      'category': category.value,
+      'collection_type': collectionType.value,
+      'customer_name': customerName,
+      'reference_number': referenceNumber,
       'description': description,
-      'receipt_number': receiptNumber,
       'recorded_by': recordedBy,
-      'approved_by': approvedBy,
       'created_at': createdAt.toIso8601String(),
       'synced_at': syncedAt?.toIso8601String(),
     };
   }
 
   /// Create a copy with updated fields
-  ShiftExpense copyWith({
+  ShiftCollection copyWith({
     String? id,
     String? financialShiftId,
     String? branchId,
     double? amount,
-    ExpenseCategory? category,
+    CollectionType? collectionType,
+    String? customerName,
+    String? referenceNumber,
     String? description,
-    String? receiptNumber,
     String? recordedBy,
-    String? approvedBy,
     DateTime? createdAt,
     DateTime? syncedAt,
   }) {
-    return ShiftExpense(
+    return ShiftCollection(
       id: id ?? this.id,
       financialShiftId: financialShiftId ?? this.financialShiftId,
       branchId: branchId ?? this.branchId,
       amount: amount ?? this.amount,
-      category: category ?? this.category,
+      collectionType: collectionType ?? this.collectionType,
+      customerName: customerName ?? this.customerName,
+      referenceNumber: referenceNumber ?? this.referenceNumber,
       description: description ?? this.description,
-      receiptNumber: receiptNumber ?? this.receiptNumber,
       recordedBy: recordedBy ?? this.recordedBy,
-      approvedBy: approvedBy ?? this.approvedBy,
       createdAt: createdAt ?? this.createdAt,
       syncedAt: syncedAt ?? this.syncedAt,
     );
@@ -99,8 +107,8 @@ class ShiftExpense extends Equatable {
 
   @override
   List<Object?> get props => [
-    id, financialShiftId, branchId, amount, category,
-    description, receiptNumber, recordedBy, approvedBy,
+    id, financialShiftId, branchId, amount, collectionType,
+    customerName, referenceNumber, description, recordedBy,
     createdAt, syncedAt,
   ];
 }

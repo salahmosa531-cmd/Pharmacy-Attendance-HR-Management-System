@@ -95,10 +95,10 @@ class AttendanceRecord extends Equatable {
           ? DateTime.parse(map['clock_out_time'] as String)
           : null,
       clockInMethod: map['clock_in_method'] != null
-          ? AttendanceMethodExtension.fromString(map['clock_in_method'] as String)
+          ? AttendanceMethod.fromString(map['clock_in_method'] as String)
           : null,
       clockOutMethod: map['clock_out_method'] != null
-          ? AttendanceMethodExtension.fromString(map['clock_out_method'] as String)
+          ? AttendanceMethod.fromString(map['clock_out_method'] as String)
           : null,
       clockInDeviceId: map['clock_in_device_id'] as String?,
       clockOutDeviceId: map['clock_out_device_id'] as String?,
@@ -109,7 +109,7 @@ class AttendanceRecord extends Equatable {
       workedMinutes: (map['worked_minutes'] as int?) ?? 0,
       overtimeMinutes: (map['overtime_minutes'] as int?) ?? 0,
       breakMinutes: (map['break_minutes'] as int?) ?? 0,
-      status: AttendanceStatusExtension.fromString(map['status'] as String? ?? 'present'),
+      status: AttendanceStatus.fromString(map['status'] as String? ?? 'present'),
       isLateForgiven: (map['is_late_forgiven'] as int?) == 1,
       lateForgivenessReason: map['late_forgiveness_reason'] as String?,
       lateForgivenBy: map['late_forgiven_by'] as String?,

@@ -37,7 +37,7 @@ class User extends Equatable {
       username: map['username'] as String,
       passwordHash: map['password_hash'] as String,
       salt: map['salt'] as String,
-      role: UserRoleExtension.fromString(map['role'] as String),
+      role: UserRole.fromString(map['role'] as String),
       employeeId: map['employee_id'] as String?,
       branchId: map['branch_id'] as String?,
       isActive: (map['is_active'] as int?) == 1,

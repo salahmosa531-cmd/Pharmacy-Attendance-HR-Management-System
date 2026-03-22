@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import '../../core/enums/financial_enums.dart';
 
 /// Represents a financial shift session for cash management
 /// 
@@ -150,23 +151,4 @@ class FinancialShift extends Equatable {
     openingCash, status, notes, scheduledShiftId, scheduledShiftName,
     openedByEmployeeName, createdAt, updatedAt, syncedAt,
   ];
-}
-
-/// Financial shift status enum
-enum FinancialShiftStatus {
-  open('open', 'Open'),
-  closed('closed', 'Closed'),
-  cancelled('cancelled', 'Cancelled');
-
-  final String value;
-  final String displayName;
-
-  const FinancialShiftStatus(this.value, this.displayName);
-
-  static FinancialShiftStatus fromString(String value) {
-    return FinancialShiftStatus.values.firstWhere(
-      (s) => s.value == value,
-      orElse: () => FinancialShiftStatus.open,
-    );
-  }
 }

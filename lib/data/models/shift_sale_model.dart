@@ -1,5 +1,5 @@
 import 'package:equatable/equatable.dart';
-import '../../core/constants/app_constants.dart';
+import '../../core/enums/financial_enums.dart';
 
 /// Represents a sale transaction during a financial shift
 /// 
@@ -40,7 +40,7 @@ class ShiftSale extends Equatable {
       financialShiftId: map['financial_shift_id'] as String,
       branchId: map['branch_id'] as String,
       amount: (map['amount'] as num?)?.toDouble() ?? 0,
-      paymentMethod: PaymentMethodExtension.fromString(map['payment_method'] as String? ?? 'cash'),
+      paymentMethod: PaymentMethod.fromString(map['payment_method'] as String? ?? 'cash'),
       description: map['description'] as String?,
       invoiceNumber: map['invoice_number'] as String?,
       customerName: map['customer_name'] as String?,

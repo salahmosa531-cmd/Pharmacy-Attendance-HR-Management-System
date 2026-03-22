@@ -81,6 +81,11 @@ class LoggingService {
     log(LogLevel.info, source, message);
   }
   
+  /// Log a debug message
+  void debug(String source, String message, [Object? error, StackTrace? stackTrace]) {
+    log(LogLevel.debug, source, message, error, stackTrace);
+  }
+  
   /// Log a warning message
   void warning(String source, String message, [Object? error]) {
     log(LogLevel.warning, source, message, error);

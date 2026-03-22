@@ -1,3 +1,4 @@
+import '../../core/enums/financial_enums.dart';
 import '../models/shift_expense_model.dart';
 import 'base_repository.dart';
 

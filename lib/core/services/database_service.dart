@@ -479,10 +479,13 @@ class DatabaseService {
         shift_id TEXT,
         employee_id TEXT NOT NULL,
         opened_at TEXT NOT NULL,
+        opened_by_employee_name TEXT,
         closed_at TEXT,
         opening_cash REAL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'open',
         notes TEXT,
+        scheduled_shift_id TEXT,     
+        scheduled_shift_name TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         synced_at TEXT,
@@ -533,6 +536,26 @@ class DatabaseService {
       )
     ''');
     
+    // Shift Collections (تحصيلات) - Records collections received during a shift
+    batch.execute('''
+      CREATE TABLE shift_collections (
+        id TEXT PRIMARY KEY,
+        financial_shift_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        collection_type TEXT NOT NULL DEFAULT 'credit_sale',
+        customer_name TEXT,
+        reference_number TEXT,
+        description TEXT,
+        recorded_by TEXT,
+        created_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL
+      )
+    ''');
+    
     // Shift Closures - Records the final state when closing a shift
     batch.execute('''
       CREATE TABLE shift_closures (
@@ -545,6 +568,7 @@ class DatabaseService {
         total_wallet_sales REAL NOT NULL DEFAULT 0,
         total_insurance_sales REAL NOT NULL DEFAULT 0,
         total_credit_sales REAL NOT NULL DEFAULT 0,
+        total_collections REAL NOT NULL DEFAULT 0,
         total_expenses REAL NOT NULL DEFAULT 0,
         expected_cash REAL NOT NULL DEFAULT 0,
         actual_cash REAL NOT NULL,
@@ -617,6 +641,8 @@ class DatabaseService {
     batch.execute('CREATE INDEX idx_shift_sales_shift ON shift_sales(financial_shift_id)');
     batch.execute('CREATE INDEX idx_shift_sales_date ON shift_sales(created_at)');
     batch.execute('CREATE INDEX idx_shift_expenses_shift ON shift_expenses(financial_shift_id)');
+    batch.execute('CREATE INDEX idx_shift_collections_shift ON shift_collections(financial_shift_id)');
+    batch.execute('CREATE INDEX idx_shift_collections_date ON shift_collections(created_at)');
     batch.execute('CREATE INDEX idx_suppliers_branch ON suppliers(branch_id)');
     batch.execute('CREATE INDEX idx_supplier_transactions_supplier ON supplier_transactions(supplier_id)');
     batch.execute('CREATE INDEX idx_supplier_transactions_date ON supplier_transactions(created_at)');
@@ -771,7 +797,26 @@ class DatabaseService {
     if (oldVersion < 6) {
       await _migrateToV6(db);
     }
+        // Migration v6 -> v7
+    if (oldVersion < 7) {
+      await _migrateToV7(db);
+    }
     
+    // Migration v7 -> v8
+    if (oldVersion < 8) {
+      await _migrateToV8(db);
+    }
+    
+    // Migration v8 -> v9: Fix column name typo
+    if (oldVersion < 9) {
+      await _migrateToV9(db);
+    }
+    
+    // Migration v9 -> v10: Add shift_collections table
+    if (oldVersion < 10) {
+      await _migrateToV10(db);
+    }
+
     // Migration v3 -> v4: Employee-User integrity enhancements
     // This migration runs for all databases to ensure:
     // 1. Users without employees get employees provisioned
@@ -1102,7 +1147,154 @@ class DatabaseService {
     
     _logMigration('v6 migration completed: Schedule-driven financial shifts');
   }
-  
+    /// Migration to v7: Fix missing columns in financial_shifts
+  Future<void> _migrateToV7(Database db) async {
+    _logMigration('Starting v7 migration: Ensuring financial_shifts columns exist');
+    
+    // التأكد من إضافة الأعمدة في حال لم يتم إضافتها في v6
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'scheduled_shift_id',
+      columnType: 'TEXT',
+    );
+    
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'scheduled_shift_name',
+      columnType: 'TEXT',
+    );
+
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'opened_by_employee_name',
+      columnType: 'TEXT',
+    );
+    
+    _logMigration('v7 migration completed');
+  }
+
+  /// Migration to v8: Ensure opened_by_employee_name column exists
+  Future<void> _migrateToV8(Database db) async {
+    _logMigration('Starting v8 migration: Ensuring financial_shifts columns exist');
+    
+    // التأكد من إضافة الأعمدة في حال لم يتم إضافتها في v6
+    await _safeAddColumn(
+      db,
+      tableName: 'financial_shifts',
+      columnName: 'opened_by_employee_name',
+      columnType: 'TEXT',
+    );
+    
+    _logMigration('v8 migration completed');
+  }
+
+  /// Migration to v9: Fix column name typo (opend_by_employee_name -> opened_by_employee_name)
+  /// 
+  /// This migration handles databases that were created with the typo in _onCreate
+  /// and ensures all databases have the correct column name.
+  Future<void> _migrateToV9(Database db) async {
+    _logMigration('Starting v9 migration: Fix column name typo in financial_shifts');
+    
+    // Check if the typo column exists
+    final tableInfo = await db.rawQuery('PRAGMA table_info(financial_shifts)');
+    final hasTypoColumn = tableInfo.any(
+      (col) => col['name']?.toString() == 'opend_by_employee_name',
+    );
+    final hasCorrectColumn = tableInfo.any(
+      (col) => col['name']?.toString() == 'opened_by_employee_name',
+    );
+    
+    if (hasTypoColumn && !hasCorrectColumn) {
+      // Database was created with typo - need to create new column and migrate data
+      _logMigration('Found typo column "opend_by_employee_name", migrating to "opened_by_employee_name"');
+      
+      // Add the correct column
+      await _safeAddColumn(
+        db,
+        tableName: 'financial_shifts',
+        columnName: 'opened_by_employee_name',
+        columnType: 'TEXT',
+      );
+      
+      // Copy data from typo column to correct column
+      await db.execute('''
+        UPDATE financial_shifts 
+        SET opened_by_employee_name = opend_by_employee_name 
+        WHERE opend_by_employee_name IS NOT NULL
+      ''');
+      
+      _logMigration('Migrated data from typo column to correct column');
+      
+      // Note: SQLite doesn't support DROP COLUMN in older versions
+      // The typo column will remain but unused - this is safe
+    } else if (!hasCorrectColumn) {
+      // Neither column exists - add the correct one
+      _logMigration('Adding missing "opened_by_employee_name" column');
+      await _safeAddColumn(
+        db,
+        tableName: 'financial_shifts',
+        columnName: 'opened_by_employee_name',
+        columnType: 'TEXT',
+      );
+    } else {
+      _logMigration('Column "opened_by_employee_name" already exists correctly');
+    }
+    
+    _logMigration('v9 migration completed');
+  }
+
+  /// Migration to v10: Add shift_collections table for tracking collections (تحصيلات)
+  /// 
+  /// Collections represent cash-in from debtors/customers:
+  /// - Credit sale collections (آجل)
+  /// - Insurance reimbursements (تأمين)
+  /// - Installment payments (أقساط)
+  /// - Supplier refunds (مرتجعات)
+  Future<void> _migrateToV10(Database db) async {
+    _logMigration('Starting v10 migration: Add shift_collections table');
+    
+    // Create shift_collections table if not exists
+    if (!await _tableExists(db, 'shift_collections')) {
+      _logMigration('Creating shift_collections table');
+      await db.execute('''
+        CREATE TABLE shift_collections (
+          id TEXT PRIMARY KEY,
+          financial_shift_id TEXT NOT NULL,
+          branch_id TEXT NOT NULL,
+          amount REAL NOT NULL,
+          collection_type TEXT NOT NULL DEFAULT 'credit_sale',
+          customer_name TEXT,
+          reference_number TEXT,
+          description TEXT,
+          recorded_by TEXT,
+          created_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL
+        )
+      ''');
+    }
+    
+    // Create indexes for shift_collections
+    await _safeCreateIndex(db, 'idx_shift_collections_shift', 'shift_collections', 'financial_shift_id');
+    await _safeCreateIndex(db, 'idx_shift_collections_date', 'shift_collections', 'created_at');
+    
+    // Add total_collections column to shift_closures
+    await _safeAddColumn(
+      db,
+      tableName: 'shift_closures',
+      columnName: 'total_collections',
+      columnType: 'REAL',
+      defaultValue: '0',
+    );
+    
+    _logMigration('v10 migration completed: shift_collections table created');
+  }
+
   /// Migration for Employee-User integrity
   /// 
   /// SINGLE-BRANCH ARCHITECTURE: Ensures all users have employee records
