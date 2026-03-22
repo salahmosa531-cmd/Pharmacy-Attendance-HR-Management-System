@@ -701,6 +701,9 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
   // ═══════════════════════════════════════════════════════════════════════════
   
   /// Open a new financial shift
+  /// 
+  /// DRAWER STARTS AT ZERO - No opening cash prompt
+  /// The drawer balance starts at 0 and accumulates from cash sales and collections
   Future<void> _openShift() async {
     // Prevent duplicate shift
     if (_currentFinancialShift != null) {
@@ -719,9 +722,8 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
       'Scheduled: $_isEmployeeScheduled, Shift: ${_currentScheduledShift?.name}',
     );
     
-    // Get opening cash (change float)
-    final openingCash = await _showOpeningCashDialog();
-    if (openingCash == null) return;
+    // Drawer starts at ZERO - no opening cash dialog
+    const double openingCash = 0.0;
     
     setState(() => _isProcessing = true);
     
@@ -733,7 +735,7 @@ class _PublicShiftScreenState extends State<PublicShiftScreen> with WidgetsBindi
           'Scheduled: ${_currentScheduledShift!.name} (${_currentScheduledShift!.timeRange})',
         if (!_isEmployeeScheduled && _currentScheduledShift != null)
           'WARNING: Employee not scheduled',
-        '[DRAWER_START] Drawer initialized with ${openingCash.toStringAsFixed(2)} EGP change float',
+        '[DRAWER_START] Drawer initialized at 0 EGP (zero-start policy)',
       ];
       
       _currentFinancialShift = await _financialService.openShift(

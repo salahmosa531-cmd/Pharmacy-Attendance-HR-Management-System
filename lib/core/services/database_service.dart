@@ -536,6 +536,26 @@ class DatabaseService {
       )
     ''');
     
+    // Shift Collections (تحصيلات) - Records collections received during a shift
+    batch.execute('''
+      CREATE TABLE shift_collections (
+        id TEXT PRIMARY KEY,
+        financial_shift_id TEXT NOT NULL,
+        branch_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        collection_type TEXT NOT NULL DEFAULT 'credit_sale',
+        customer_name TEXT,
+        reference_number TEXT,
+        description TEXT,
+        recorded_by TEXT,
+        created_at TEXT NOT NULL,
+        synced_at TEXT,
+        FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+        FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL
+      )
+    ''');
+    
     // Shift Closures - Records the final state when closing a shift
     batch.execute('''
       CREATE TABLE shift_closures (
@@ -548,6 +568,7 @@ class DatabaseService {
         total_wallet_sales REAL NOT NULL DEFAULT 0,
         total_insurance_sales REAL NOT NULL DEFAULT 0,
         total_credit_sales REAL NOT NULL DEFAULT 0,
+        total_collections REAL NOT NULL DEFAULT 0,
         total_expenses REAL NOT NULL DEFAULT 0,
         expected_cash REAL NOT NULL DEFAULT 0,
         actual_cash REAL NOT NULL,
@@ -620,6 +641,8 @@ class DatabaseService {
     batch.execute('CREATE INDEX idx_shift_sales_shift ON shift_sales(financial_shift_id)');
     batch.execute('CREATE INDEX idx_shift_sales_date ON shift_sales(created_at)');
     batch.execute('CREATE INDEX idx_shift_expenses_shift ON shift_expenses(financial_shift_id)');
+    batch.execute('CREATE INDEX idx_shift_collections_shift ON shift_collections(financial_shift_id)');
+    batch.execute('CREATE INDEX idx_shift_collections_date ON shift_collections(created_at)');
     batch.execute('CREATE INDEX idx_suppliers_branch ON suppliers(branch_id)');
     batch.execute('CREATE INDEX idx_supplier_transactions_supplier ON supplier_transactions(supplier_id)');
     batch.execute('CREATE INDEX idx_supplier_transactions_date ON supplier_transactions(created_at)');
@@ -787,6 +810,11 @@ class DatabaseService {
     // Migration v8 -> v9: Fix column name typo
     if (oldVersion < 9) {
       await _migrateToV9(db);
+    }
+    
+    // Migration v9 -> v10: Add shift_collections table
+    if (oldVersion < 10) {
+      await _migrateToV10(db);
     }
 
     // Migration v3 -> v4: Employee-User integrity enhancements
@@ -1216,6 +1244,55 @@ class DatabaseService {
     }
     
     _logMigration('v9 migration completed');
+  }
+
+  /// Migration to v10: Add shift_collections table for tracking collections (تحصيلات)
+  /// 
+  /// Collections represent cash-in from debtors/customers:
+  /// - Credit sale collections (آجل)
+  /// - Insurance reimbursements (تأمين)
+  /// - Installment payments (أقساط)
+  /// - Supplier refunds (مرتجعات)
+  Future<void> _migrateToV10(Database db) async {
+    _logMigration('Starting v10 migration: Add shift_collections table');
+    
+    // Create shift_collections table if not exists
+    if (!await _tableExists(db, 'shift_collections')) {
+      _logMigration('Creating shift_collections table');
+      await db.execute('''
+        CREATE TABLE shift_collections (
+          id TEXT PRIMARY KEY,
+          financial_shift_id TEXT NOT NULL,
+          branch_id TEXT NOT NULL,
+          amount REAL NOT NULL,
+          collection_type TEXT NOT NULL DEFAULT 'credit_sale',
+          customer_name TEXT,
+          reference_number TEXT,
+          description TEXT,
+          recorded_by TEXT,
+          created_at TEXT NOT NULL,
+          synced_at TEXT,
+          FOREIGN KEY (financial_shift_id) REFERENCES financial_shifts(id) ON DELETE CASCADE,
+          FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+          FOREIGN KEY (recorded_by) REFERENCES employees(id) ON DELETE SET NULL
+        )
+      ''');
+    }
+    
+    // Create indexes for shift_collections
+    await _safeCreateIndex(db, 'idx_shift_collections_shift', 'shift_collections', 'financial_shift_id');
+    await _safeCreateIndex(db, 'idx_shift_collections_date', 'shift_collections', 'created_at');
+    
+    // Add total_collections column to shift_closures
+    await _safeAddColumn(
+      db,
+      tableName: 'shift_closures',
+      columnName: 'total_collections',
+      columnType: 'REAL',
+      defaultValue: '0',
+    );
+    
+    _logMigration('v10 migration completed: shift_collections table created');
   }
 
   /// Migration for Employee-User integrity
